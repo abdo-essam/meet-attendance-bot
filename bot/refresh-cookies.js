@@ -31,11 +31,31 @@ async function refreshCookies() {
     var browser = await puppeteer.launch({
         headless: 'new',
         executablePath: CHROME_PATH,
-        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu',
-            '--disable-blink-features=AutomationControlled', '--window-size=1280,720', '--disable-features=Crashpad'],
+        args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-gpu',
+            '--disable-blink-features=AutomationControlled',
+            '--window-size=1280,720',
+            '--disable-features=Crashpad',
+            '--disable-crash-reporter',
+            '--disable-breakpad',
+            '--noerrdialogs',
+            '--disable-component-update'
+        ],
         defaultViewport: { width: 1280, height: 720 },
         protocolTimeout: 120000,
-        ignoreDefaultArgs: ['--enable-automation']
+        ignoreDefaultArgs: ['--enable-automation'],
+        handleSIGINT: false,
+        handleSIGTERM: false,
+        handleSIGHUP: false,
+        env: {
+            ...process.env,
+            CHROME_CRASHPAD_PIPE_NAME: 'none',
+            BREAKPAD_DUMP_LOCATION: '/tmp',
+            CHROME_LOG_FILE: '/dev/null'
+        }
     });
     console.log('✅ Launched!');
 

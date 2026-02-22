@@ -59,11 +59,24 @@ async function main() {
             '--auto-accept-camera-and-microphone-capture',
             '--disable-blink-features=AutomationControlled',
             '--window-size=1280,720',
-            '--disable-features=Crashpad'
+            '--disable-features=Crashpad',
+            '--disable-crash-reporter',
+            '--disable-breakpad',
+            '--noerrdialogs',
+            '--disable-component-update'
         ],
         defaultViewport: { width: 1280, height: 720 },
         protocolTimeout: 120000,
-        ignoreDefaultArgs: ['--enable-automation']
+        ignoreDefaultArgs: ['--enable-automation'],
+        handleSIGINT: false,
+        handleSIGTERM: false,
+        handleSIGHUP: false,
+        env: {
+            ...process.env,
+            CHROME_CRASHPAD_PIPE_NAME: 'none',
+            BREAKPAD_DUMP_LOCATION: '/tmp',
+            CHROME_LOG_FILE: '/dev/null'
+        }
     });
 
     console.log('✅ Browser launched!');

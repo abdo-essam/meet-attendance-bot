@@ -53,6 +53,8 @@ jobs:
           COOKIE_PASSWORD: ${{ secrets.COOKIE_PASSWORD }}
           GOOGLE_COOKIES: ${{ secrets.GOOGLE_COOKIES }}
           CHROME_PATH: /usr/bin/google-chrome-stable
+          CHROME_CRASHPAD_PIPE_NAME: none
+          BREAKPAD_DUMP_LOCATION: /tmp
         run: |
           eval $(dbus-launch --sh-syntax)
           cd bot && xvfb-run --auto-servernum --server-args="-screen 0 1280x720x24 -ac" node refresh-cookies.js
