@@ -40,13 +40,12 @@ jobs:
       - name: 🌐 Install Chrome & dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y wget gnupg
+          sudo apt-get install -y wget gnupg xvfb
           wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg
           echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
           sudo apt-get update
           sudo apt-get install -y google-chrome-stable
-          
-          # Verify installation
+
           google-chrome-stable --version
 
       - name: 📦 Install dependencies
@@ -72,7 +71,13 @@ jobs:
           DURATION_MINUTES: ${{ github.event.inputs.duration_minutes || '120' }}
           COOKIE_PASSWORD: ${{ secrets.COOKIE_PASSWORD }}
           GOOGLE_COOKIES: ${{ secrets.GOOGLE_COOKIES }}
-        run: cd bot && node bot.js
+          DBUS_SESSION_BUS_ADDRESS: /dev/null
+          CHROME_DEVEL_SANDBOX: /usr/local/sbin/chrome-devel-sandbox
+        run: |
+          export DISPLAY=:99
+          sudo Xvfb :99 -screen 0 1280x720x24 &
+          sleep 2
+          cd bot && node bot.js
         timeout-minutes: 360
 
       - name: 💾 Save refreshed cookies & reports
