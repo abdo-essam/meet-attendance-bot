@@ -90,6 +90,15 @@ async function main() {
         console.log('🌐 No system Chrome found, using Puppeteer bundled Chrome');
     }
 
+    // Check Puppeteer's default executable
+    try {
+        var defaultExec = require('puppeteer').executablePath();
+        console.log('🌐 Puppeteer default executable: ' + defaultExec);
+        console.log('   Exists: ' + fs.existsSync(defaultExec));
+    } catch (e) {
+        console.log('⚠️ Could not get Puppeteer executable path: ' + e.message);
+    }
+
     var launchArgs = [
         '--no-sandbox',
         '--disable-setuid-sandbox',
@@ -123,11 +132,9 @@ async function main() {
         '--window-size=1280,720'
     ];
 
-    // ─── Try multiple launch strategies ───
     var browser;
     var strategies = [];
 
-    // Strategy 1: System Chrome with headless='new'
     if (chromePath) {
         strategies.push({
             name: 'System Chrome (headless=new)',
@@ -141,7 +148,6 @@ async function main() {
             }
         });
 
-        // Strategy 2: System Chrome with headless=true (old mode)
         strategies.push({
             name: 'System Chrome (headless=true)',
             options: {
@@ -154,9 +160,8 @@ async function main() {
             }
         });
 
-        // Strategy 3: System Chrome with --headless=old flag
         strategies.push({
-            name: 'System Chrome (--headless=old in args)',
+            name: 'System Chrome (--headless=old)',
             options: {
                 headless: false,
                 executablePath: chromePath,
@@ -168,7 +173,6 @@ async function main() {
         });
     }
 
-    // Strategy 4: Puppeteer bundled Chrome
     strategies.push({
         name: 'Puppeteer bundled Chrome',
         options: {
@@ -183,17 +187,37 @@ async function main() {
     for (var i = 0; i < strategies.length; i++) {
         var strategy = strategies[i];
         try {
-            console.log('🚀 Strategy ' + (i + 1) + '/' + strategies.length + ': ' + strategy.name + '...');
+            console.log('\n🚀 Strategy ' + (i + 1) + '/' + strategies.length + ': ' + strategy.name + '...');
             browser = await puppeteer.launch(strategy.options);
             console.log('✅ Browser launched successfully with: ' + strategy.name);
             break;
         } catch (e) {
-            console.log('⚠️ ' + strategy.name + ' failed: ' + e.message.split('\n')[0]);
+            console.log('❌ ' + strategy.name + ' FAILED');
+            console.log('─── FULL ERROR START ───');
+            console.log(e.message);
+            console.log('─── FULL ERROR END ───');
             if (i === strategies.length - 1) {
-                console.log('❌ ALL launch strategies failed!');
-                console.log('\nFull last error:');
-                console.log(e.message);
-                process.exit(1);
+                console.log('\n❌ ALL launch strategies failed!');
+
+                // Last resort: try with absolute minimal args
+                console.log('\n🚀 LAST RESORT: Minimal launch...');
+                try {
+                    var lastResortOptions = {
+                        headless: 'new',
+                        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+                        defaultViewport: { width: 1280, height: 720 },
+                        protocolTimeout: 120000
+                    };
+                    if (chromePath) {
+                        lastResortOptions.executablePath = chromePath;
+                    }
+                    browser = await puppeteer.launch(lastResortOptions);
+                    console.log('✅ LAST RESORT worked!');
+                } catch (e2) {
+                    console.log('❌ LAST RESORT FAILED:');
+                    console.log(e2.message);
+                    process.exit(1);
+                }
             }
             await sleep(2000);
         }

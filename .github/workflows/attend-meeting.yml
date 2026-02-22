@@ -42,11 +42,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y wget gnupg xvfb dbus dbus-x11 || true
 
-          # Start dbus
           sudo mkdir -p /run/dbus || true
           sudo dbus-daemon --system --fork || true
 
-          # Install Google Chrome
           wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg
           echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
           sudo apt-get update
@@ -54,8 +52,60 @@ jobs:
 
           google-chrome-stable --version
 
+      - name: 🔍 Debug Chrome Launch
+        run: |
+          export DISPLAY=:99
+          Xvfb :99 -screen 0 1280x720x24 -ac +extension GLX +render -noreset &
+          sleep 3
+
+          eval $(dbus-launch --sh-syntax)
+          export DBUS_SESSION_BUS_ADDRESS
+
+          echo "=== Testing Chrome directly ==="
+          google-chrome-stable --headless --no-sandbox --disable-gpu --dump-dom https://www.google.com 2>&1 | head -50 || true
+
+          echo ""
+          echo "=== Testing Chrome with --headless=new ==="
+          google-chrome-stable --headless=new --no-sandbox --disable-gpu --dump-dom https://www.google.com 2>&1 | head -50 || true
+
+          echo ""
+          echo "=== Testing Chrome with --headless=old ==="
+          google-chrome-stable --headless=old --no-sandbox --disable-gpu --dump-dom https://www.google.com 2>&1 | head -50 || true
+
+          echo ""
+          echo "=== Chrome binary info ==="
+          which google-chrome-stable
+          ls -la /usr/bin/google-chrome*
+          file /usr/bin/google-chrome-stable
+
+          echo ""
+          echo "=== Check shared libraries ==="
+          ldd /opt/google/chrome/chrome 2>&1 | grep "not found" || echo "All libraries found!"
+
+          echo ""
+          echo "=== Puppeteer Chrome path ==="
+          ls -la node_modules/puppeteer-core/.local-chromium/ 2>/dev/null || true
+          ls -la node_modules/puppeteer/.local-chromium/ 2>/dev/null || true
+          find /home/runner -name "chrome" -type f 2>/dev/null | head -5 || true
+
       - name: 📦 Install dependencies
         run: cd bot && npm install
+
+      - name: 🔍 Debug Puppeteer Chrome
+        run: |
+          cd bot
+          echo "=== Puppeteer cache ==="
+          ls -la ~/.cache/puppeteer/ 2>/dev/null || echo "No puppeteer cache"
+          find ~/.cache/puppeteer -name "chrome" -type f 2>/dev/null || echo "No chrome in cache"
+          
+          echo ""
+          echo "=== Node test ==="
+          node -e "
+            const puppeteer = require('puppeteer');
+            console.log('Puppeteer executable:', puppeteer.executablePath());
+            const fs = require('fs');
+            console.log('Exists:', fs.existsSync(puppeteer.executablePath()));
+          " || true
 
       - name: 🍪 Restore cookies
         env:
@@ -78,16 +128,13 @@ jobs:
           COOKIE_PASSWORD: ${{ secrets.COOKIE_PASSWORD }}
           GOOGLE_COOKIES: ${{ secrets.GOOGLE_COOKIES }}
         run: |
-          # Start virtual display
           export DISPLAY=:99
           Xvfb :99 -screen 0 1280x720x24 -ac +extension GLX +render -noreset &
           sleep 3
-          
-          # Start dbus session
+
           eval $(dbus-launch --sh-syntax)
           export DBUS_SESSION_BUS_ADDRESS
-          
-          # Run bot
+
           cd bot && node bot.js
         timeout-minutes: 360
 
