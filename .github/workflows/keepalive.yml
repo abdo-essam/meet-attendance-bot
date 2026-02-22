@@ -54,7 +54,6 @@ jobs:
           COOKIE_PASSWORD: ${{ secrets.COOKIE_PASSWORD }}
           GOOGLE_COOKIES: ${{ secrets.GOOGLE_COOKIES }}
           DBUS_SESSION_BUS_ADDRESS: /dev/null
-          CHROME_DEVEL_SANDBOX: /usr/local/sbin/chrome-devel-sandbox
         run: |
           export DISPLAY=:99
           sudo Xvfb :99 -screen 0 1280x720x24 &
