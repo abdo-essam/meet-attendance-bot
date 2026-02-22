@@ -1,182 +1,66 @@
-var puppeteer = require('puppeteer-core');
-var fs = require('fs');
-var path = require('path');
-var cryptoHelper = require('./crypto-helper');
+// ============================================
+//  Google Meet Attendance Bot
+// ============================================
 
-var meetLink = process.env.MEET_LINK || 'https://meet.google.com/';
-var durationMinutes = parseInt(process.env.DURATION_MINUTES || '120');
-var CHROME_PATH = process.env.CHROME_PATH || '/usr/bin/google-chrome-stable';
+const fs = require('fs');
+const path = require('path');
+const { MEET_LINK, DURATION_MINUTES, MEETING_NAME, REPORTS_DIR } = require('./config');
+const { loadCookies, injectCookies, extractCookies, saveCookies } = require('./cookie-manager');
+const { sleep, launchBrowser, createStealthPage, verifySession } = require('./browser-helper');
 
-async function sleep(ms) {
-    return new Promise(r => setTimeout(r, ms));
-}
+// ─── Join-button text patterns ──────────────────
+const JOIN_TEXTS = ['انضم الآن', 'Join now', 'Ask to join', 'طلب الانضمام'];
+const SKIP_TEXTS = ['طرق أخرى', 'Other ways', 'expand_more', 'مشاركة', 'Share', 'Present'];
 
 async function main() {
     console.log('═'.repeat(50));
     console.log('🤖 Meet Attendance Bot');
     console.log('═'.repeat(50));
 
-    var cookies = [];
-    var COOKIE_PASSWORD = process.env.COOKIE_PASSWORD || 'default-password';
-
-    var encPath = path.join(__dirname, '..', 'cookies', 'session.enc');
-    if (fs.existsSync(encPath)) {
-        try {
-            cookies = JSON.parse(cryptoHelper.decrypt(fs.readFileSync(encPath, 'utf8'), COOKIE_PASSWORD));
-            console.log('✅ Loaded ' + cookies.length + ' cookies from encrypted file');
-        } catch (e) { console.log('⚠️ Encrypted failed: ' + e.message); }
+    // ─── Load cookies ───────────────────────────
+    const cookies = loadCookies();
+    if (cookies.length === 0) {
+        console.log('❌ No cookies found! Run save-cookies first.');
+        process.exit(1);
     }
 
-    if (cookies.length === 0 && fs.existsSync(path.join(__dirname, 'cookies.json'))) {
-        try {
-            cookies = JSON.parse(fs.readFileSync(path.join(__dirname, 'cookies.json'), 'utf8'));
-            console.log('✅ Loaded ' + cookies.length + ' cookies from cookies.json');
-        } catch (e) { }
+    // ─── Launch browser ─────────────────────────
+    const browser = await launchBrowser();
+    const page = await createStealthPage(browser);
+
+    // ─── Inject cookies ─────────────────────────
+    await injectCookies(page, cookies);
+
+    // ─── Verify session ─────────────────────────
+    const sessionOk = await verifySession(page);
+
+    if (!fs.existsSync(REPORTS_DIR)) {
+        fs.mkdirSync(REPORTS_DIR, { recursive: true });
     }
 
-    if (cookies.length === 0 && process.env.GOOGLE_COOKIES) {
-        try {
-            cookies = JSON.parse(Buffer.from(process.env.GOOGLE_COOKIES, 'base64').toString('utf8'));
-            console.log('✅ Loaded ' + cookies.length + ' cookies from secret');
-        } catch (e) { }
-    }
-
-    if (cookies.length === 0) { console.log('❌ NO COOKIES!'); process.exit(1); }
-
-    // ─── Launch ───
-    console.log('\n🚀 Launching Chrome at: ' + CHROME_PATH);
-
-    var browser = await puppeteer.launch({
-        headless: 'new',
-        executablePath: CHROME_PATH,
-        args: [
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-dev-shm-usage',
-            '--disable-gpu',
-            '--use-fake-ui-for-media-stream',
-            '--use-fake-device-for-media-stream',
-            '--auto-accept-camera-and-microphone-capture',
-            '--disable-blink-features=AutomationControlled',
-            '--window-size=1280,720',
-            '--disable-features=Crashpad',
-            '--disable-crash-reporter',
-            '--disable-breakpad',
-            '--noerrdialogs',
-            '--disable-component-update'
-        ],
-        defaultViewport: { width: 1280, height: 720 },
-        protocolTimeout: 120000,
-        ignoreDefaultArgs: ['--enable-automation'],
-        handleSIGINT: false,
-        handleSIGTERM: false,
-        handleSIGHUP: false,
-        env: {
-            ...process.env,
-            CHROME_CRASHPAD_PIPE_NAME: 'none',
-            BREAKPAD_DUMP_LOCATION: '/tmp',
-            CHROME_LOG_FILE: '/dev/null'
-        }
-    });
-
-    console.log('✅ Browser launched!');
-    var page = await browser.newPage();
-
-    // Stealth
-    await page.evaluateOnNewDocument(() => {
-        Object.defineProperty(navigator, 'webdriver', { get: () => false });
-        window.navigator.chrome = { runtime: {} };
-        Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
-        Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en', 'ar'] });
-    });
-
-    try {
-        const ctx = browser.defaultBrowserContext();
-        await ctx.overridePermissions('https://meet.google.com', ['camera', 'microphone', 'notifications']);
-    } catch (e) { }
-
-    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36');
-    await page.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9,ar;q=0.8' });
-
-    // ─── Load Cookies ───
-    try {
-        const client = await page.target().createCDPSession();
-        const valid = cookies.map(c => { let cp = {...c}; delete cp.size; delete cp.session; return cp; });
-        await client.send('Network.setCookies', { cookies: valid });
-        console.log('✅ Cookies loaded');
-    } catch (e) {
-        try { await page.setCookie(...cookies); } catch (err) { }
-    }
-
-    // ─── Verify Session ───
-    console.log('\n🌐 Verifying session...');
-    try { await page.goto('https://myaccount.google.com/', { waitUntil: 'domcontentloaded', timeout: 30000 }); } catch (e) { }
-    await sleep(5000);
-
-    var reportsDir = path.join(__dirname, 'reports');
-    if (!fs.existsSync(reportsDir)) fs.mkdirSync(reportsDir, { recursive: true });
-
-    const currUrl = page.url();
-    console.log('📍 ' + currUrl);
-
-    if (currUrl.includes('ServiceLogin') || currUrl.includes('signin/identifier') || currUrl.includes('signin/v2')) {
-        console.log('❌ Session expired!');
-        try { await page.screenshot({ path: path.join(reportsDir, 'debug_session.png') }); } catch (e) { }
+    if (!sessionOk) {
+        await takeScreenshot(page, 'debug_session.png');
         await browser.close();
         process.exit(1);
     }
-    console.log('✅ Session OK!');
 
-    // ─── Go to Meet ───
-    console.log('\n⏳ Going to ' + meetLink);
-    try { await page.goto(meetLink, { waitUntil: 'networkidle2', timeout: 60000 }); } catch (e) { }
-
-    // ─── Wait for join page ───
-    console.log('⏳ Waiting for join page...');
-    let joinReady = false;
-
-    for (let w = 0; w < 30; w++) {
-        await sleep(2000);
-        let txt = '';
-        try { txt = await page.evaluate(() => document.body ? document.body.innerText : ''); } catch (e) { continue; }
-
-        if (txt.includes('انضم الآن') || txt.includes('Join now') || txt.includes('Ask to join') || txt.includes('طلب الانضمام')) {
-            console.log('✅ Join page ready! [' + (w+1) + ']');
-            joinReady = true;
-            break;
-        }
-        if (txt.includes("can't join") || txt.includes('لا يمكنك')) {
-            console.log('❌ Meeting unavailable [' + (w+1) + ']');
-            break;
-        }
-
-        // If on Meet homepage, retry
-        let u = page.url();
-        if ((u === 'https://meet.google.com/' || u === 'https://meet.google.com') && (w === 3 || w === 10)) {
-            console.log('⚠️ On homepage, retrying navigation...');
-            try { await page.goto(meetLink, { waitUntil: 'networkidle2', timeout: 30000 }); } catch (e) { }
-        }
-
-        if (w % 5 === 0) console.log('⏳ [' + (w+1) + '/30] ' + u.substring(0, 60));
-    }
-
-    try { await page.screenshot({ path: path.join(reportsDir, 'step1_before_join.png') }); } catch (e) { }
-
-    // ─── Dismiss popups ───
-    console.log('\n🔕 Dismissing popups...');
-    for (let i = 0; i < 3; i++) { await page.keyboard.press('Escape'); await sleep(300); }
+    // ─── Navigate to Meet ───────────────────────
+    console.log(`\n⏳ Going to ${MEET_LINK}`);
     try {
-        await page.evaluate(() => {
-            var btns = document.querySelectorAll('button');
-            for (var b of btns) {
-                var a = b.getAttribute('aria-label') || '';
-                if (a.includes('Close') || a.includes('إغلاق') || a === 'Got it' || a === 'حسنًا') { b.click(); break; }
-            }
-        });
-    } catch (e) { }
-    await sleep(500);
+        await page.goto(MEET_LINK, { waitUntil: 'networkidle2', timeout: 60000 });
+    } catch (_) { /* timeout is non-fatal */ }
 
-    // ─── Mute ───
+    // ─── Wait for join page ─────────────────────
+    console.log('⏳ Waiting for join page...');
+    const joinReady = await waitForJoinPage(page);
+
+    await takeScreenshot(page, 'step1_before_join.png');
+
+    // ─── Dismiss popups ─────────────────────────
+    console.log('\n🔕 Dismissing popups...');
+    await dismissPopups(page);
+
+    // ─── Mute mic & camera ──────────────────────
     console.log('🔇 Muting...');
     await page.keyboard.down('Control');
     await page.keyboard.press('d');
@@ -184,159 +68,311 @@ async function main() {
     await page.keyboard.up('Control');
     await sleep(1000);
 
-    try { await page.screenshot({ path: path.join(reportsDir, 'step2_after_mute.png') }); } catch (e) { }
+    await takeScreenshot(page, 'step2_after_mute.png');
 
-    // ─── JOIN ───
+    // ─── Join meeting ───────────────────────────
     console.log('\n🚪 JOINING...');
+    await tryJoin(page, { maxAttempts: 3 });
 
-    // Method 1: Direct DOM click
-    try {
-        var result = await page.evaluate(() => {
-            var joinTexts = ['انضم الآن', 'Join now', 'Ask to join', 'طلب الانضمام'];
-            var skipTexts = ['طرق أخرى', 'Other ways', 'expand_more', 'مشاركة', 'Share', 'Present'];
-            var btns = document.querySelectorAll('button, [role="button"]');
-            var info = [];
+    await takeScreenshot(page, 'step3_after_join.png');
 
-            for (var btn of btns) {
-                var t = btn.textContent.trim();
-                var r = btn.getBoundingClientRect();
-                var s = window.getComputedStyle(btn);
-                if (r.width === 0 || r.height === 0 || s.display === 'none') continue;
+    // ─── Check join result ──────────────────────
+    console.log('\n🔍 Checking result...');
+    await checkJoinResult(page);
 
-                info.push(t.substring(0, 60) + ' [' + Math.round(r.width) + 'x' + Math.round(r.height) + ']');
+    // ─── Stay in meeting ────────────────────────
+    console.log(`\n🎥 Staying ${DURATION_MINUTES} min...`);
+    await stayInMeeting(page);
 
-                var skip = false;
-                for (var sk of skipTexts) { if (t.includes(sk)) { skip = true; break; } }
-                if (skip) continue;
-
-                for (var jt of joinTexts) {
-                    if (t.includes(jt)) {
-                        btn.click();
-                        return { clicked: t, info: info };
-                    }
-                }
-            }
-
-            // Blue button fallback
-            var best = null, bestA = 0;
-            for (var btn of btns) {
-                var r = btn.getBoundingClientRect();
-                var s = window.getComputedStyle(btn);
-                var t = btn.textContent.trim();
-                var skip = false;
-                for (var sk of skipTexts) { if (t.includes(sk)) { skip = true; break; } }
-                if (skip) continue;
-                var a = r.width * r.height;
-                var blue = s.backgroundColor.includes('26, 115, 232') || s.backgroundColor.includes('66, 133, 244');
-                if (blue && a > bestA && a > 3000) { best = btn; bestA = a; }
-            }
-            if (best) { best.click(); return { clicked: 'BLUE:' + best.textContent.trim(), info: info }; }
-
-            return { clicked: null, info: info };
-        });
-
-        console.log('📋 Buttons: ' + JSON.stringify(result.info));
-        if (result.clicked) console.log('✅ Clicked: "' + result.clicked + '"');
-        else console.log('⚠️ No join button found');
-    } catch (e) { console.log('⚠️ ' + e.message); }
-
-    await sleep(8000);
-
-    // Method 2: Retry
-    try {
-        var still = await page.evaluate(() => document.body.innerText.includes('انضم الآن') || document.body.innerText.includes('Join now'));
-        if (still) {
-            console.log('⚠️ Retrying join...');
-            await page.keyboard.press('Escape');
-            await sleep(500);
-            await page.evaluate(() => {
-                var btns = document.querySelectorAll('button');
-                for (var b of btns) {
-                    var t = b.textContent.trim();
-                    if (t === 'انضم الآن' || t === 'Join now' || t === 'Ask to join') {
-                        b.focus();
-                        b.click();
-                        b.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-                        return;
-                    }
-                }
-            });
-            await sleep(8000);
-        }
-    } catch (e) { }
-
-    // Method 3: Tab + Enter
-    try {
-        var still2 = await page.evaluate(() => document.body.innerText.includes('انضم الآن') || document.body.innerText.includes('Join now'));
-        if (still2) {
-            console.log('⚠️ Trying Tab+Enter...');
-            for (let t = 0; t < 20; t++) {
-                await page.keyboard.press('Tab');
-                await sleep(200);
-                var f = await page.evaluate(() => document.activeElement ? document.activeElement.textContent.trim() : '').catch(() => '');
-                if (f.includes('انضم') || f.includes('Join')) {
-                    console.log('✅ Focused: "' + f + '" → Enter');
-                    await page.keyboard.press('Enter');
-                    await sleep(8000);
-                    break;
-                }
-            }
-        }
-    } catch (e) { }
-
-    try { await page.screenshot({ path: path.join(reportsDir, 'step3_after_join.png') }); } catch (e) { }
-
-    // ─── Check result ───
-    console.log('\n🔍 Result...');
-    var txt = '';
-    try { txt = await page.evaluate(() => document.body.innerText); } catch (e) { }
-
-    if (txt.includes("can't join") || txt.includes('لا يمكنك')) console.log('❌ Rejected');
-    else if (txt.includes('Leave') || txt.includes('مغادرة')) console.log('✅ JOINED!');
-    else if (txt.includes('انضم') || txt.includes('Join')) {
-        console.log('⚠️ Still on join page, final attempt...');
-        try {
-            await page.evaluate(() => {
-                var b = document.querySelectorAll('button');
-                for (var x of b) { if (x.textContent.includes('انضم الآن') || x.textContent.includes('Join now')) { x.click(); return; } }
-            });
-        } catch (e) { }
-        await sleep(8000);
-    }
-    else console.log('⚠️ Unknown: ' + txt.substring(0, 200));
-
-    // ─── Stay ───
-    console.log('\n🎥 Staying ' + durationMinutes + ' min...');
-    let si = 1;
-    var end = Date.now() + durationMinutes * 60000;
-    while (Date.now() < end) {
-        console.log('[' + new Date().toISOString() + '] ' + Math.round((end - Date.now()) / 60000) + ' min left');
-        try { await page.screenshot({ path: path.join(reportsDir, 'screenshot_' + si + '.png') }); } catch (e) { }
-        si++;
-        try { await page.mouse.move(Math.random() * 800 + 100, Math.random() * 500 + 100); } catch (e) { }
-        var w = Math.min(end - Date.now(), 600000);
-        if (w <= 0) break;
-        await sleep(w);
-    }
-
+    // ─── Save report ────────────────────────────
     console.log('\n✅ Time over.');
-    fs.writeFileSync(path.join(reportsDir, 'report.txt'), 'Link: ' + meetLink + '\nName: ' + (process.env.MEETING_NAME || '') + '\nDuration: ' + durationMinutes + ' min\nEnd: ' + new Date().toISOString());
+    fs.writeFileSync(
+        path.join(REPORTS_DIR, 'report.txt'),
+        `Link: ${MEET_LINK}\nName: ${MEETING_NAME}\nDuration: ${DURATION_MINUTES} min\nEnd: ${new Date().toISOString()}`
+    );
 
+    // ─── Save refreshed cookies ─────────────────
     console.log('\n🍪 Saving cookies...');
     try {
-        var cl = await page.target().createCDPSession();
-        var fr = (await cl.send('Network.getAllCookies')).cookies;
-        if (fr.length >= 10) {
-            fs.writeFileSync(path.join(__dirname, 'cookies.json'), JSON.stringify(fr));
-            var cd = path.join(__dirname, '..', 'cookies');
-            if (!fs.existsSync(cd)) fs.mkdirSync(cd, { recursive: true });
-            fs.writeFileSync(path.join(cd, 'session.enc'), cryptoHelper.encrypt(JSON.stringify(fr), COOKIE_PASSWORD));
-            console.log('✅ Saved ' + fr.length + ' cookies');
+        const freshCookies = await extractCookies(page);
+        if (freshCookies.length >= 10) {
+            saveCookies(freshCookies);
+        } else {
+            console.log(`⚠️ Too few cookies (${freshCookies.length}), skipping save`);
         }
-    } catch (e) { console.log('⚠️ ' + e.message); }
+    } catch (err) {
+        console.log(`⚠️ Cookie save failed: ${err.message}`);
+    }
 
     await browser.close();
     console.log('\n✅ Done!');
 }
 
-main().catch(function (e) { console.error('❌ Bot error:', e); process.exit(1); });
+// ─── Helper functions ───────────────────────────
+
+async function takeScreenshot(page, filename) {
+    try {
+        await page.screenshot({ path: path.join(REPORTS_DIR, filename) });
+    } catch (_) { /* non-critical */ }
+}
+
+async function waitForJoinPage(page) {
+    for (let attempt = 0; attempt < 30; attempt++) {
+        await sleep(2000);
+
+        let text = '';
+        try {
+            text = await page.evaluate(() => document.body ? document.body.innerText : '');
+        } catch (_) {
+            continue;
+        }
+
+        // Check for join button text
+        if (JOIN_TEXTS.some((t) => text.includes(t))) {
+            console.log(`✅ Join page ready! [${attempt + 1}]`);
+            return true;
+        }
+
+        // Check for rejection
+        if (text.includes("can't join") || text.includes('لا يمكنك')) {
+            console.log(`❌ Meeting unavailable [${attempt + 1}]`);
+            return false;
+        }
+
+        // Retry navigation if stuck on homepage
+        const url = page.url();
+        if (
+            (url === 'https://meet.google.com/' || url === 'https://meet.google.com') &&
+            (attempt === 3 || attempt === 10)
+        ) {
+            console.log('⚠️ On homepage, retrying navigation...');
+            try {
+                await page.goto(MEET_LINK, { waitUntil: 'networkidle2', timeout: 30000 });
+            } catch (_) { /* non-fatal */ }
+        }
+
+        if (attempt % 5 === 0) {
+            console.log(`⏳ [${attempt + 1}/30] ${url.substring(0, 60)}`);
+        }
+    }
+    return false;
+}
+
+async function dismissPopups(page) {
+    for (let i = 0; i < 3; i++) {
+        await page.keyboard.press('Escape');
+        await sleep(300);
+    }
+    try {
+        await page.evaluate(() => {
+            const buttons = document.querySelectorAll('button');
+            for (const btn of buttons) {
+                const label = btn.getAttribute('aria-label') || '';
+                if (label.includes('Close') || label.includes('إغلاق') || label === 'Got it' || label === 'حسنًا') {
+                    btn.click();
+                    break;
+                }
+            }
+        });
+    } catch (_) { /* non-critical */ }
+    await sleep(500);
+}
+
+/**
+ * Try to click the join button using multiple strategies, with retries.
+ */
+async function tryJoin(page, { maxAttempts = 3 } = {}) {
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        // Strategy 1: Direct DOM click on known join texts
+        const clicked = await clickJoinButton(page);
+        if (clicked) {
+            console.log(`✅ Join button clicked (attempt ${attempt})`);
+            await sleep(8000);
+
+            // Check if we actually joined
+            const stillOnJoinPage = await isOnJoinPage(page);
+            if (!stillOnJoinPage) return true;
+            console.log(`⚠️ Still on join page after attempt ${attempt}`);
+        }
+
+        // Strategy 2: Press Escape first, then retry click with focus+dispatch
+        if (attempt < maxAttempts) {
+            console.log(`⚠️ Retrying join (attempt ${attempt + 1})...`);
+            await page.keyboard.press('Escape');
+            await sleep(500);
+
+            const forcedClick = await forceClickJoinButton(page);
+            if (forcedClick) {
+                await sleep(8000);
+                const stillOnJoinPage = await isOnJoinPage(page);
+                if (!stillOnJoinPage) return true;
+            }
+        }
+    }
+
+    // Final fallback: Tab + Enter
+    console.log('⚠️ Trying Tab+Enter fallback...');
+    return await tabEnterJoin(page);
+}
+
+async function clickJoinButton(page) {
+    try {
+        const result = await page.evaluate((joinTexts, skipTexts) => {
+            const buttons = document.querySelectorAll('button, [role="button"]');
+            const info = [];
+
+            for (const btn of buttons) {
+                const text = btn.textContent.trim();
+                const rect = btn.getBoundingClientRect();
+                const style = window.getComputedStyle(btn);
+                if (rect.width === 0 || rect.height === 0 || style.display === 'none') continue;
+
+                info.push(`${text.substring(0, 60)} [${Math.round(rect.width)}x${Math.round(rect.height)}]`);
+
+                if (skipTexts.some((s) => text.includes(s))) continue;
+
+                if (joinTexts.some((j) => text.includes(j))) {
+                    btn.click();
+                    return { clicked: text, info };
+                }
+            }
+
+            // Blue button fallback
+            let best = null;
+            let bestArea = 0;
+            for (const btn of buttons) {
+                const rect = btn.getBoundingClientRect();
+                const style = window.getComputedStyle(btn);
+                const text = btn.textContent.trim();
+
+                if (skipTexts.some((s) => text.includes(s))) continue;
+
+                const area = rect.width * rect.height;
+                const isBlue =
+                    style.backgroundColor.includes('26, 115, 232') ||
+                    style.backgroundColor.includes('66, 133, 244');
+
+                if (isBlue && area > bestArea && area > 3000) {
+                    best = btn;
+                    bestArea = area;
+                }
+            }
+            if (best) {
+                best.click();
+                return { clicked: `BLUE:${best.textContent.trim()}`, info };
+            }
+
+            return { clicked: null, info };
+        }, JOIN_TEXTS, SKIP_TEXTS);
+
+        console.log(`📋 Buttons: ${JSON.stringify(result.info)}`);
+        if (result.clicked) {
+            console.log(`✅ Clicked: "${result.clicked}"`);
+            return true;
+        }
+        console.log('⚠️ No join button found');
+        return false;
+    } catch (err) {
+        console.log(`⚠️ clickJoinButton: ${err.message}`);
+        return false;
+    }
+}
+
+async function forceClickJoinButton(page) {
+    try {
+        return await page.evaluate((joinTexts) => {
+            const buttons = document.querySelectorAll('button');
+            for (const btn of buttons) {
+                const text = btn.textContent.trim();
+                if (joinTexts.some((j) => text.includes(j))) {
+                    btn.focus();
+                    btn.click();
+                    btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+                    return true;
+                }
+            }
+            return false;
+        }, JOIN_TEXTS);
+    } catch (_) {
+        return false;
+    }
+}
+
+async function tabEnterJoin(page) {
+    try {
+        for (let t = 0; t < 20; t++) {
+            await page.keyboard.press('Tab');
+            await sleep(200);
+            const focused = await page
+                .evaluate(() => document.activeElement ? document.activeElement.textContent.trim() : '')
+                .catch(() => '');
+
+            if (focused.includes('انضم') || focused.includes('Join')) {
+                console.log(`✅ Focused: "${focused}" → Enter`);
+                await page.keyboard.press('Enter');
+                await sleep(8000);
+                return true;
+            }
+        }
+    } catch (_) { /* non-critical */ }
+    return false;
+}
+
+async function isOnJoinPage(page) {
+    try {
+        return await page.evaluate(() => {
+            const text = document.body.innerText;
+            return text.includes('انضم الآن') || text.includes('Join now');
+        });
+    } catch (_) {
+        return false;
+    }
+}
+
+async function checkJoinResult(page) {
+    let text = '';
+    try {
+        text = await page.evaluate(() => document.body.innerText);
+    } catch (_) { /* non-critical */ }
+
+    if (text.includes("can't join") || text.includes('لا يمكنك')) {
+        console.log('❌ Rejected');
+    } else if (text.includes('Leave') || text.includes('مغادرة')) {
+        console.log('✅ JOINED!');
+    } else if (text.includes('انضم') || text.includes('Join')) {
+        console.log('⚠️ Still on join page, final attempt...');
+        await forceClickJoinButton(page);
+        await sleep(8000);
+    } else {
+        console.log(`⚠️ Unknown state: ${text.substring(0, 200)}`);
+    }
+}
+
+async function stayInMeeting(page) {
+    let screenshotIndex = 1;
+    const endTime = Date.now() + DURATION_MINUTES * 60000;
+
+    while (Date.now() < endTime) {
+        const minutesLeft = Math.round((endTime - Date.now()) / 60000);
+        console.log(`[${new Date().toISOString()}] ${minutesLeft} min left`);
+
+        await takeScreenshot(page, `screenshot_${screenshotIndex}.png`);
+        screenshotIndex++;
+
+        // Keep the session alive with mouse movement
+        try {
+            await page.mouse.move(Math.random() * 800 + 100, Math.random() * 500 + 100);
+        } catch (_) { /* non-critical */ }
+
+        const waitTime = Math.min(endTime - Date.now(), 600000);
+        if (waitTime <= 0) break;
+        await sleep(waitTime);
+    }
+}
+
+// ─── Entry point ────────────────────────────────
+
+main().catch((err) => {
+    console.error('❌ Bot error:', err);
+    process.exit(1);
+});
