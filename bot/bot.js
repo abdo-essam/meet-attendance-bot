@@ -70,12 +70,18 @@ async function main() {
             '--disable-gpu',
             '--single-process',
             '--no-zygote',
-            '--use-fake-ui-for-media-stream'
+            '--use-fake-ui-for-media-stream',
+            '--disable-blink-features=AutomationControlled'
         ],
         defaultViewport: { width: 1280, height: 720 }
     });
 
     var page = await browser.newPage();
+
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
+    await page.setExtraHTTPHeaders({
+        'Accept-Language': 'en-US,en;q=0.9'
+    });
 
     try {
         await page.setCookie(...cookies);
@@ -145,11 +151,8 @@ async function main() {
     console.log('\n🍪 Saving refreshed cookies...');
 
     try {
-        var freshCookies = await page.cookies(
-            'https://accounts.google.com',
-            'https://meet.google.com',
-            'https://www.google.com'
-        );
+        const client = await page.target().createCDPSession();
+        const { cookies: freshCookies } = await client.send('Network.getAllCookies');
 
         // Save raw
         fs.writeFileSync(

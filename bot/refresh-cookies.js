@@ -73,12 +73,18 @@ async function refreshCookies() {
             '--disable-dev-shm-usage',
             '--disable-gpu',
             '--single-process',
-            '--no-zygote'
+            '--no-zygote',
+            '--disable-blink-features=AutomationControlled'
         ],
         defaultViewport: { width: 1280, height: 720 }
     });
 
     var page = await browser.newPage();
+
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
+    await page.setExtraHTTPHeaders({
+        'Accept-Language': 'en-US,en;q=0.9'
+    });
 
     // ─── Set cookies ───
     await page.setCookie(...cookies);
@@ -141,12 +147,8 @@ async function refreshCookies() {
     // ─── Extract fresh cookies ───
     console.log('\n🍪 Extracting fresh cookies...');
 
-    var freshCookies = await page.cookies(
-        'https://accounts.google.com',
-        'https://meet.google.com',
-        'https://www.google.com',
-        'https://mail.google.com'
-    );
+    const client = await page.target().createCDPSession();
+    const { cookies: freshCookies } = await client.send('Network.getAllCookies');
 
     console.log('✅ Got ' + freshCookies.length + ' fresh cookies');
 

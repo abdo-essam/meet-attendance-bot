@@ -2,9 +2,9 @@ const puppeteer = require('puppeteer');
 const fs = require('fs');
 
 async function saveCookies() {
-    console.log('=' .repeat(50));
+    console.log('='.repeat(50));
     console.log('🚀 Step 1: Login & Save Cookies (Remote Debug)');
-    console.log('=' .repeat(50));
+    console.log('='.repeat(50));
 
     console.log('\n⚠️ Make sure Chrome is running with remote debugging:');
     console.log('"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" --remote-debugging-port=9222 --user-data-dir="C:\\chrome-debug"');
@@ -51,11 +51,8 @@ async function saveCookies() {
 
     console.log('\n✅ Login detected! Saving cookies...');
 
-    const cookies = await page.cookies(
-        'https://accounts.google.com',
-        'https://meet.google.com',
-        'https://www.google.com'
-    );
+    const client = await page.target().createCDPSession();
+    const { cookies } = await client.send('Network.getAllCookies');
 
     const jsonStr = JSON.stringify(cookies);
     const base64Str = Buffer.from(jsonStr, 'utf8').toString('base64');
