@@ -1,16 +1,11 @@
-// Use regular puppeteer for launching (it works!)
-var vanillaPuppeteer = require('puppeteer');
-
-// Use puppeteer-extra stealth for page-level evasion
-var { PuppeteerExtraPlugin } = require('puppeteer-extra-plugin');
-var StealthPlugin = require('puppeteer-extra-plugin-stealth');
-
+var puppeteer = require('puppeteer-core');
 var fs = require('fs');
 var path = require('path');
 var cryptoHelper = require('./crypto-helper');
 
 var meetLink = process.env.MEET_LINK || 'https://meet.google.com/';
 var durationMinutes = parseInt(process.env.DURATION_MINUTES || '120');
+var CHROME_PATH = process.env.CHROME_PATH || '/usr/bin/google-chrome-stable';
 
 async function sleep(ms) {
     return new Promise(r => setTimeout(r, ms));
@@ -21,239 +16,148 @@ async function main() {
     console.log('🤖 Meet Attendance Bot');
     console.log('═'.repeat(50));
 
-    // ─── Load Cookies ───
-    console.log('\n🍪 Loading Google session...');
-
     var cookies = [];
     var COOKIE_PASSWORD = process.env.COOKIE_PASSWORD || 'default-password';
 
     var encPath = path.join(__dirname, '..', 'cookies', 'session.enc');
-    if (cookies.length === 0 && fs.existsSync(encPath)) {
+    if (fs.existsSync(encPath)) {
         try {
-            var enc = fs.readFileSync(encPath, 'utf8');
-            cookies = JSON.parse(cryptoHelper.decrypt(enc, COOKIE_PASSWORD));
-            console.log('✅ Loaded from encrypted file (' + cookies.length + ' cookies)');
-        } catch (e) {
-            console.log('⚠️ Encrypted file failed: ' + e.message);
-        }
+            cookies = JSON.parse(cryptoHelper.decrypt(fs.readFileSync(encPath, 'utf8'), COOKIE_PASSWORD));
+            console.log('✅ Loaded ' + cookies.length + ' cookies from encrypted file');
+        } catch (e) { console.log('⚠️ Encrypted failed: ' + e.message); }
     }
 
-    var rawPath = path.join(__dirname, 'cookies.json');
-    if (cookies.length === 0 && fs.existsSync(rawPath)) {
+    if (cookies.length === 0 && fs.existsSync(path.join(__dirname, 'cookies.json'))) {
         try {
-            cookies = JSON.parse(fs.readFileSync(rawPath, 'utf8'));
-            console.log('✅ Loaded from cookies.json (' + cookies.length + ' cookies)');
-        } catch (e) {
-            console.log('⚠️ cookies.json failed: ' + e.message);
-        }
+            cookies = JSON.parse(fs.readFileSync(path.join(__dirname, 'cookies.json'), 'utf8'));
+            console.log('✅ Loaded ' + cookies.length + ' cookies from cookies.json');
+        } catch (e) { }
     }
 
     if (cookies.length === 0 && process.env.GOOGLE_COOKIES) {
         try {
-            var decoded = Buffer.from(process.env.GOOGLE_COOKIES, 'base64').toString('utf8');
-            cookies = JSON.parse(decoded);
-            console.log('✅ Loaded from GitHub Secret (' + cookies.length + ' cookies)');
-        } catch (e) {
-            console.log('⚠️ Secret failed: ' + e.message);
-        }
+            cookies = JSON.parse(Buffer.from(process.env.GOOGLE_COOKIES, 'base64').toString('utf8'));
+            console.log('✅ Loaded ' + cookies.length + ' cookies from secret');
+        } catch (e) { }
     }
 
-    if (cookies.length === 0) {
-        console.log('❌ NO COOKIES!');
-        process.exit(1);
-    }
+    if (cookies.length === 0) { console.log('❌ NO COOKIES!'); process.exit(1); }
 
-    // ─── Launch Browser using vanilla puppeteer ───
-    console.log('\n🚀 Launching browser...');
-    console.log('Puppeteer Chrome: ' + vanillaPuppeteer.executablePath());
-    console.log('Exists: ' + fs.existsSync(vanillaPuppeteer.executablePath()));
+    // ─── Launch ───
+    console.log('\n🚀 Launching Chrome at: ' + CHROME_PATH);
 
-    var browser = await vanillaPuppeteer.launch({
+    var browser = await puppeteer.launch({
         headless: 'new',
+        executablePath: CHROME_PATH,
         args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',
             '--disable-dev-shm-usage',
+            '--disable-gpu',
             '--use-fake-ui-for-media-stream',
             '--use-fake-device-for-media-stream',
             '--auto-accept-camera-and-microphone-capture',
             '--disable-blink-features=AutomationControlled',
-            '--window-size=1280,720'
+            '--window-size=1280,720',
+            '--disable-features=Crashpad'
         ],
         defaultViewport: { width: 1280, height: 720 },
-        protocolTimeout: 120000
+        protocolTimeout: 120000,
+        ignoreDefaultArgs: ['--enable-automation']
     });
 
     console.log('✅ Browser launched!');
-
     var page = await browser.newPage();
 
-    // ─── Apply stealth manually via page-level evasion ───
-    try {
-        await page.evaluateOnNewDocument(() => {
-            // Hide webdriver
-            Object.defineProperty(navigator, 'webdriver', { get: () => false });
-
-            // Hide automation
-            window.navigator.chrome = { runtime: {} };
-
-            // Fake plugins
-            Object.defineProperty(navigator, 'plugins', {
-                get: () => [1, 2, 3, 4, 5]
-            });
-
-            // Fake languages
-            Object.defineProperty(navigator, 'languages', {
-                get: () => ['en-US', 'en', 'ar']
-            });
-
-            // Hide Chrome headless signals
-            const originalQuery = window.navigator.permissions.query;
-            window.navigator.permissions.query = (parameters) =>
-                parameters.name === 'notifications'
-                    ? Promise.resolve({ state: Notification.permission })
-                    : originalQuery(parameters);
-        });
-        console.log('✅ Stealth evasion applied');
-    } catch (e) {
-        console.log('⚠️ Stealth evasion: ' + e.message);
-    }
+    // Stealth
+    await page.evaluateOnNewDocument(() => {
+        Object.defineProperty(navigator, 'webdriver', { get: () => false });
+        window.navigator.chrome = { runtime: {} };
+        Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+        Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en', 'ar'] });
+    });
 
     try {
-        const context = browser.defaultBrowserContext();
-        await context.overridePermissions('https://meet.google.com', [
-            'camera', 'microphone', 'notifications'
-        ]);
+        const ctx = browser.defaultBrowserContext();
+        await ctx.overridePermissions('https://meet.google.com', ['camera', 'microphone', 'notifications']);
     } catch (e) { }
 
-    await page.setUserAgent(
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
-        '(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
-    );
-    await page.setExtraHTTPHeaders({
-        'Accept-Language': 'en-US,en;q=0.9,ar;q=0.8'
-    });
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36');
+    await page.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9,ar;q=0.8' });
 
     // ─── Load Cookies ───
     try {
         const client = await page.target().createCDPSession();
-        const validCookies = cookies.map(c => {
-            let copy = { ...c };
-            delete copy.size;
-            delete copy.session;
-            return copy;
-        });
-        await client.send('Network.setCookies', { cookies: validCookies });
-        console.log('✅ Cookies loaded into browser');
+        const valid = cookies.map(c => { let cp = {...c}; delete cp.size; delete cp.session; return cp; });
+        await client.send('Network.setCookies', { cookies: valid });
+        console.log('✅ Cookies loaded');
     } catch (e) {
         try { await page.setCookie(...cookies); } catch (err) { }
     }
 
     // ─── Verify Session ───
-    console.log('\n🌐 Verifying Google Session...');
-
-    try {
-        await page.goto('https://myaccount.google.com/', {
-            waitUntil: 'domcontentloaded', timeout: 30000
-        });
-        await sleep(5000);
-    } catch (e) { }
-
-    const currUrl = page.url();
-    console.log('📍 URL: ' + currUrl);
-
-    const isSignedIn =
-        currUrl.includes('myaccount.google.com') ||
-        currUrl.includes('accounts.google.com/SignOutOptions') ||
-        currUrl.includes('google.com/account/about');
-    const isOnSignIn =
-        currUrl.includes('ServiceLogin') ||
-        currUrl.includes('signin/v2') ||
-        currUrl.includes('accounts.google.com/v3/signin') ||
-        currUrl.includes('signin/identifier');
+    console.log('\n🌐 Verifying session...');
+    try { await page.goto('https://myaccount.google.com/', { waitUntil: 'domcontentloaded', timeout: 30000 }); } catch (e) { }
+    await sleep(5000);
 
     var reportsDir = path.join(__dirname, 'reports');
     if (!fs.existsSync(reportsDir)) fs.mkdirSync(reportsDir, { recursive: true });
 
-    if (!isSignedIn || isOnSignIn) {
-        console.log('❌ Session invalid!');
-        try { await page.screenshot({ path: path.join(reportsDir, 'debug_session.png'), fullPage: true }); } catch (e) { }
+    const currUrl = page.url();
+    console.log('📍 ' + currUrl);
+
+    if (currUrl.includes('ServiceLogin') || currUrl.includes('signin/identifier') || currUrl.includes('signin/v2')) {
+        console.log('❌ Session expired!');
+        try { await page.screenshot({ path: path.join(reportsDir, 'debug_session.png') }); } catch (e) { }
         await browser.close();
         process.exit(1);
     }
-    console.log('✅ Session verified!');
+    console.log('✅ Session OK!');
 
-    // ─── Navigate to Meet Link ───
-    console.log('\n⏳ Going to ' + meetLink + '...');
-
-    try {
-        await page.goto(meetLink, { waitUntil: 'networkidle2', timeout: 60000 });
-    } catch (e) {
-        console.log('⚠️ Navigation timeout, continuing...');
-    }
+    // ─── Go to Meet ───
+    console.log('\n⏳ Going to ' + meetLink);
+    try { await page.goto(meetLink, { waitUntil: 'networkidle2', timeout: 60000 }); } catch (e) { }
 
     // ─── Wait for join page ───
-    console.log('⏳ Waiting for meeting page...');
-
-    let joinPageState = 'unknown';
+    console.log('⏳ Waiting for join page...');
+    let joinReady = false;
 
     for (let w = 0; w < 30; w++) {
         await sleep(2000);
+        let txt = '';
+        try { txt = await page.evaluate(() => document.body ? document.body.innerText : ''); } catch (e) { continue; }
 
-        let pageText = '';
-        try {
-            pageText = await page.evaluate(() => document.body ? document.body.innerText : '');
-        } catch (e) { continue; }
-
-        let url = page.url();
-
-        if (pageText.includes('انضم الآن') || pageText.includes('Join now') ||
-            pageText.includes('Ask to join') || pageText.includes('طلب الانضمام') ||
-            pageText.includes('مستعد للانضمام')) {
-            console.log('✅ [' + (w+1) + '] Join page ready!');
-            joinPageState = 'ready';
+        if (txt.includes('انضم الآن') || txt.includes('Join now') || txt.includes('Ask to join') || txt.includes('طلب الانضمام')) {
+            console.log('✅ Join page ready! [' + (w+1) + ']');
+            joinReady = true;
+            break;
+        }
+        if (txt.includes("can't join") || txt.includes('لا يمكنك')) {
+            console.log('❌ Meeting unavailable [' + (w+1) + ']');
             break;
         }
 
-        if (pageText.includes("can't join") || pageText.includes('لا يمكنك الانضمام') ||
-            pageText.includes('Meeting has ended') || pageText.includes('انتهى')) {
-            console.log('❌ [' + (w+1) + '] Meeting unavailable');
-            joinPageState = 'unavailable';
-            break;
+        // If on Meet homepage, retry
+        let u = page.url();
+        if ((u === 'https://meet.google.com/' || u === 'https://meet.google.com') && (w === 3 || w === 10)) {
+            console.log('⚠️ On homepage, retrying navigation...');
+            try { await page.goto(meetLink, { waitUntil: 'networkidle2', timeout: 30000 }); } catch (e) { }
         }
 
-        if (url === 'https://meet.google.com/' || url === 'https://meet.google.com') {
-            if (w === 5 || w === 15) {
-                console.log('⚠️ [' + (w+1) + '] On homepage, retrying...');
-                try { await page.goto(meetLink, { waitUntil: 'networkidle2', timeout: 30000 }); } catch (e) { }
-            }
-        }
-
-        if (w % 5 === 0) console.log('⏳ [' + (w+1) + '/30] URL: ' + url.substring(0, 60));
+        if (w % 5 === 0) console.log('⏳ [' + (w+1) + '/30] ' + u.substring(0, 60));
     }
 
     try { await page.screenshot({ path: path.join(reportsDir, 'step1_before_join.png') }); } catch (e) { }
 
     // ─── Dismiss popups ───
     console.log('\n🔕 Dismissing popups...');
-    for (let esc = 0; esc < 3; esc++) {
-        await page.keyboard.press('Escape');
-        await sleep(300);
-    }
-
+    for (let i = 0; i < 3; i++) { await page.keyboard.press('Escape'); await sleep(300); }
     try {
         await page.evaluate(() => {
-            var dismissTexts = ['close', 'Close', 'إغلاق', 'Dismiss', 'Got it', 'حسنًا', 'OK'];
-            var buttons = document.querySelectorAll('button, [role="button"]');
-            for (var btn of buttons) {
-                var text = btn.textContent.trim();
-                var aria = btn.getAttribute('aria-label') || '';
-                for (var dt of dismissTexts) {
-                    if (text === dt || aria === dt || aria.includes('Close') || aria.includes('إغلاق')) {
-                        btn.click();
-                        return;
-                    }
-                }
+            var btns = document.querySelectorAll('button');
+            for (var b of btns) {
+                var a = b.getAttribute('aria-label') || '';
+                if (a.includes('Close') || a.includes('إغلاق') || a === 'Got it' || a === 'حسنًا') { b.click(); break; }
             }
         });
     } catch (e) { }
@@ -269,102 +173,77 @@ async function main() {
 
     try { await page.screenshot({ path: path.join(reportsDir, 'step2_after_mute.png') }); } catch (e) { }
 
-    // ─── JOIN MEETING ───
+    // ─── JOIN ───
     console.log('\n🚪 JOINING...');
 
-    let clickedButton = null;
-
-    // METHOD 1: DOM click
+    // Method 1: Direct DOM click
     try {
-        clickedButton = await page.evaluate(() => {
-            var joinTexts = ['انضم الآن', 'Join now', 'Ask to join', 'طلب الانضمام', 'الانضمام الآن'];
+        var result = await page.evaluate(() => {
+            var joinTexts = ['انضم الآن', 'Join now', 'Ask to join', 'طلب الانضمام'];
             var skipTexts = ['طرق أخرى', 'Other ways', 'expand_more', 'مشاركة', 'Share', 'Present'];
+            var btns = document.querySelectorAll('button, [role="button"]');
+            var info = [];
 
-            var allBtns = document.querySelectorAll('button, [role="button"]');
-            var btnInfo = [];
+            for (var btn of btns) {
+                var t = btn.textContent.trim();
+                var r = btn.getBoundingClientRect();
+                var s = window.getComputedStyle(btn);
+                if (r.width === 0 || r.height === 0 || s.display === 'none') continue;
 
-            for (var btn of allBtns) {
-                var text = btn.textContent.trim();
-                var rect = btn.getBoundingClientRect();
-                var style = window.getComputedStyle(btn);
-
-                if (rect.width === 0 || rect.height === 0) continue;
-                if (style.display === 'none' || style.visibility === 'hidden') continue;
-
-                btnInfo.push(text.substring(0, 60) + ' [' + Math.round(rect.width) + 'x' + Math.round(rect.height) + ']');
+                info.push(t.substring(0, 60) + ' [' + Math.round(r.width) + 'x' + Math.round(r.height) + ']');
 
                 var skip = false;
-                for (var s of skipTexts) { if (text.includes(s)) { skip = true; break; } }
+                for (var sk of skipTexts) { if (t.includes(sk)) { skip = true; break; } }
                 if (skip) continue;
 
                 for (var jt of joinTexts) {
-                    if (text.includes(jt)) {
+                    if (t.includes(jt)) {
                         btn.click();
-                        return { clicked: text, buttons: btnInfo };
+                        return { clicked: t, info: info };
                     }
                 }
             }
 
-            // Fallback: largest blue button
-            var best = null, bestArea = 0;
-            for (var btn of allBtns) {
-                var rect = btn.getBoundingClientRect();
-                var style = window.getComputedStyle(btn);
-                var text = btn.textContent.trim();
-                var bg = style.backgroundColor;
-
+            // Blue button fallback
+            var best = null, bestA = 0;
+            for (var btn of btns) {
+                var r = btn.getBoundingClientRect();
+                var s = window.getComputedStyle(btn);
+                var t = btn.textContent.trim();
                 var skip = false;
-                for (var s of skipTexts) { if (text.includes(s)) { skip = true; break; } }
+                for (var sk of skipTexts) { if (t.includes(sk)) { skip = true; break; } }
                 if (skip) continue;
-
-                var area = rect.width * rect.height;
-                var isBlue = bg.includes('26, 115, 232') || bg.includes('24, 90, 188') || bg.includes('66, 133, 244');
-
-                if (isBlue && area > bestArea && area > 3000) {
-                    best = btn;
-                    bestArea = area;
-                }
+                var a = r.width * r.height;
+                var blue = s.backgroundColor.includes('26, 115, 232') || s.backgroundColor.includes('66, 133, 244');
+                if (blue && a > bestA && a > 3000) { best = btn; bestA = a; }
             }
+            if (best) { best.click(); return { clicked: 'BLUE:' + best.textContent.trim(), info: info }; }
 
-            if (best) {
-                best.click();
-                return { clicked: 'BLUE:' + best.textContent.trim(), buttons: btnInfo };
-            }
-
-            return { clicked: null, buttons: btnInfo };
+            return { clicked: null, info: info };
         });
 
-        if (clickedButton) {
-            console.log('📋 Buttons: ' + JSON.stringify(clickedButton.buttons));
-            if (clickedButton.clicked) {
-                console.log('✅ Clicked: "' + clickedButton.clicked + '"');
-            } else {
-                console.log('⚠️ No join button found');
-            }
-        }
-    } catch (e) {
-        console.log('⚠️ Method 1 error: ' + e.message);
-    }
+        console.log('📋 Buttons: ' + JSON.stringify(result.info));
+        if (result.clicked) console.log('✅ Clicked: "' + result.clicked + '"');
+        else console.log('⚠️ No join button found');
+    } catch (e) { console.log('⚠️ ' + e.message); }
 
     await sleep(8000);
 
-    // METHOD 2: Retry if still on join page
+    // Method 2: Retry
     try {
-        var stillOnJoin = await page.evaluate(() => {
-            return document.body.innerText.includes('انضم الآن') || document.body.innerText.includes('Join now');
-        });
-        if (stillOnJoin) {
-            console.log('⚠️ Still on join page, retrying...');
+        var still = await page.evaluate(() => document.body.innerText.includes('انضم الآن') || document.body.innerText.includes('Join now'));
+        if (still) {
+            console.log('⚠️ Retrying join...');
             await page.keyboard.press('Escape');
             await sleep(500);
             await page.evaluate(() => {
                 var btns = document.querySelectorAll('button');
-                for (var btn of btns) {
-                    var t = btn.textContent.trim();
-                    if (t === 'انضم الآن' || t === 'Join now' || t === 'Ask to join' || t === 'طلب الانضمام') {
-                        btn.focus();
-                        btn.click();
-                        btn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+                for (var b of btns) {
+                    var t = b.textContent.trim();
+                    if (t === 'انضم الآن' || t === 'Join now' || t === 'Ask to join') {
+                        b.focus();
+                        b.click();
+                        b.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
                         return;
                     }
                 }
@@ -373,22 +252,17 @@ async function main() {
         }
     } catch (e) { }
 
-    // METHOD 3: Keyboard Tab + Enter
+    // Method 3: Tab + Enter
     try {
-        var stillOnJoin2 = await page.evaluate(() => {
-            return document.body.innerText.includes('انضم الآن') || document.body.innerText.includes('Join now');
-        });
-        if (stillOnJoin2) {
-            console.log('⚠️ Trying keyboard navigation...');
+        var still2 = await page.evaluate(() => document.body.innerText.includes('انضم الآن') || document.body.innerText.includes('Join now'));
+        if (still2) {
+            console.log('⚠️ Trying Tab+Enter...');
             for (let t = 0; t < 20; t++) {
                 await page.keyboard.press('Tab');
                 await sleep(200);
-                var focused = await page.evaluate(() => {
-                    var el = document.activeElement;
-                    return el ? el.textContent.trim() : '';
-                }).catch(() => '');
-                if (focused.includes('انضم') || focused.includes('Join')) {
-                    console.log('✅ Focused: "' + focused + '" → Enter');
+                var f = await page.evaluate(() => document.activeElement ? document.activeElement.textContent.trim() : '').catch(() => '');
+                if (f.includes('انضم') || f.includes('Join')) {
+                    console.log('✅ Focused: "' + f + '" → Enter');
                     await page.keyboard.press('Enter');
                     await sleep(8000);
                     break;
@@ -400,70 +274,51 @@ async function main() {
     try { await page.screenshot({ path: path.join(reportsDir, 'step3_after_join.png') }); } catch (e) { }
 
     // ─── Check result ───
-    console.log('\n🔍 Checking result...');
-    var postJoinText = '';
-    try { postJoinText = await page.evaluate(() => document.body.innerText); } catch (e) { }
+    console.log('\n🔍 Result...');
+    var txt = '';
+    try { txt = await page.evaluate(() => document.body.innerText); } catch (e) { }
 
-    if (postJoinText.includes("can't join") || postJoinText.includes('لا يمكنك')) {
-        console.log('❌ "You can\'t join this video call"');
-    } else if (postJoinText.includes('Leave') || postJoinText.includes('مغادرة') ||
-        postJoinText.includes('people') || postJoinText.includes('أشخاص')) {
-        console.log('✅ JOINED SUCCESSFULLY!');
-    } else if (postJoinText.includes('انضم الآن') || postJoinText.includes('Join now')) {
-        console.log('⚠️ Still on join page — one more try...');
+    if (txt.includes("can't join") || txt.includes('لا يمكنك')) console.log('❌ Rejected');
+    else if (txt.includes('Leave') || txt.includes('مغادرة')) console.log('✅ JOINED!');
+    else if (txt.includes('انضم') || txt.includes('Join')) {
+        console.log('⚠️ Still on join page, final attempt...');
         try {
             await page.evaluate(() => {
-                var btns = document.querySelectorAll('button');
-                for (var btn of btns) {
-                    var t = btn.textContent.trim();
-                    if (t.includes('انضم الآن') || t.includes('Join now')) { btn.click(); return; }
-                }
+                var b = document.querySelectorAll('button');
+                for (var x of b) { if (x.textContent.includes('انضم الآن') || x.textContent.includes('Join now')) { x.click(); return; } }
             });
-            await sleep(8000);
         } catch (e) { }
-    } else {
-        console.log('⚠️ Unknown state: ' + postJoinText.substring(0, 200));
+        await sleep(8000);
     }
+    else console.log('⚠️ Unknown: ' + txt.substring(0, 200));
 
-    // ─── Stay in Meeting ───
-    console.log('\n🎥 Staying for ' + durationMinutes + ' min...');
-
-    let screenshotIndex = 1;
-    var endTime = Date.now() + (durationMinutes * 60 * 1000);
-
-    while (Date.now() < endTime) {
-        var minLeft = Math.round((endTime - Date.now()) / 60000);
-        console.log('[' + new Date().toISOString() + '] ' + minLeft + ' min left');
-        try { await page.screenshot({ path: path.join(reportsDir, 'screenshot_' + screenshotIndex + '.png') }); } catch (e) { }
-        screenshotIndex++;
-        try { await page.mouse.move(Math.floor(Math.random() * 800) + 100, Math.floor(Math.random() * 500) + 100); } catch (e) { }
-        var waitMs = Math.min(endTime - Date.now(), 10 * 60 * 1000);
-        if (waitMs <= 0) break;
-        await sleep(waitMs);
+    // ─── Stay ───
+    console.log('\n🎥 Staying ' + durationMinutes + ' min...');
+    let si = 1;
+    var end = Date.now() + durationMinutes * 60000;
+    while (Date.now() < end) {
+        console.log('[' + new Date().toISOString() + '] ' + Math.round((end - Date.now()) / 60000) + ' min left');
+        try { await page.screenshot({ path: path.join(reportsDir, 'screenshot_' + si + '.png') }); } catch (e) { }
+        si++;
+        try { await page.mouse.move(Math.random() * 800 + 100, Math.random() * 500 + 100); } catch (e) { }
+        var w = Math.min(end - Date.now(), 600000);
+        if (w <= 0) break;
+        await sleep(w);
     }
 
     console.log('\n✅ Time over.');
-
-    fs.writeFileSync(path.join(reportsDir, 'report.txt'), [
-        '📊 Attendance Report',
-        'Link: ' + meetLink,
-        'Name: ' + (process.env.MEETING_NAME || 'Unknown'),
-        'Duration: ' + durationMinutes + ' min',
-        'Start: ' + new Date(endTime - durationMinutes * 60000).toISOString(),
-        'End: ' + new Date().toISOString(),
-    ].join('\n'));
+    fs.writeFileSync(path.join(reportsDir, 'report.txt'), 'Link: ' + meetLink + '\nName: ' + (process.env.MEETING_NAME || '') + '\nDuration: ' + durationMinutes + ' min\nEnd: ' + new Date().toISOString());
 
     console.log('\n🍪 Saving cookies...');
     try {
-        const client = await page.target().createCDPSession();
-        const { cookies: fresh } = await client.send('Network.getAllCookies');
-        if (fresh.length >= 10) {
-            fs.writeFileSync(path.join(__dirname, 'cookies.json'), JSON.stringify(fresh));
-            var cookiesDir = path.join(__dirname, '..', 'cookies');
-            if (!fs.existsSync(cookiesDir)) fs.mkdirSync(cookiesDir, { recursive: true });
-            fs.writeFileSync(path.join(cookiesDir, 'session.enc'),
-                cryptoHelper.encrypt(JSON.stringify(fresh), COOKIE_PASSWORD));
-            console.log('✅ Saved ' + fresh.length + ' cookies');
+        var cl = await page.target().createCDPSession();
+        var fr = (await cl.send('Network.getAllCookies')).cookies;
+        if (fr.length >= 10) {
+            fs.writeFileSync(path.join(__dirname, 'cookies.json'), JSON.stringify(fr));
+            var cd = path.join(__dirname, '..', 'cookies');
+            if (!fs.existsSync(cd)) fs.mkdirSync(cd, { recursive: true });
+            fs.writeFileSync(path.join(cd, 'session.enc'), cryptoHelper.encrypt(JSON.stringify(fr), COOKIE_PASSWORD));
+            console.log('✅ Saved ' + fr.length + ' cookies');
         }
     } catch (e) { console.log('⚠️ ' + e.message); }
 
@@ -471,7 +326,4 @@ async function main() {
     console.log('\n✅ Done!');
 }
 
-main().catch(function (e) {
-    console.error('❌ Bot error:', e);
-    process.exit(1);
-});
+main().catch(function (e) { console.error('❌ Bot error:', e); process.exit(1); });

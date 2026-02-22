@@ -3,7 +3,6 @@ name: 🔄 Cookie Keepalive
 on:
   schedule:
     - cron: '0 3 * * *'
-
   workflow_dispatch:
 
 jobs:
@@ -24,28 +23,19 @@ jobs:
         with:
           node-version: '20'
 
-      - name: 🌐 Install Chrome & dependencies
+      - name: 🌐 Install Chrome
         run: |
           sudo apt-get update
           sudo apt-get install -y wget gnupg xvfb dbus dbus-x11 || true
-
-          sudo mkdir -p /run/dbus || true
-          sudo dbus-daemon --system --fork || true
-
           wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg
           echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
           sudo apt-get update
           sudo apt-get install -y google-chrome-stable
 
-          google-chrome-stable --version
-          
-      - name: 🧹 Clean old cache
+      - name: 📦 Install dependencies
         run: |
           rm -rf bot/node_modules bot/package-lock.json
-          rm -rf ~/.cache/puppeteer
-
-      - name: 📦 Install dependencies
-        run: cd bot && npm install
+          cd bot && npm install
 
       - name: 🍪 Restore cookies
         env:
@@ -62,18 +52,9 @@ jobs:
         env:
           COOKIE_PASSWORD: ${{ secrets.COOKIE_PASSWORD }}
           GOOGLE_COOKIES: ${{ secrets.GOOGLE_COOKIES }}
+          CHROME_PATH: /usr/bin/google-chrome-stable
         run: |
-          export DISPLAY=:99
-          # Only start Xvfb if not already running
-          if ! pgrep -x Xvfb > /dev/null; then
-            Xvfb :99 -screen 0 1280x720x24 -ac +extension GLX +render -noreset &
-            sleep 3
-          fi
-          
-          eval $(dbus-launch --sh-syntax) || true
-          export DBUS_SESSION_BUS_ADDRESS
-          
-          cd bot && node refresh-cookies.js
+          cd bot && xvfb-run --auto-servernum --server-args="-screen 0 1280x720x24 -ac" node refresh-cookies.js
 
       - name: 💾 Save refreshed cookies
         if: always()
@@ -86,7 +67,4 @@ jobs:
 
       - name: 🚨 Notify on failure
         if: failure()
-        run: |
-          echo "❌ Cookie refresh FAILED!"
-          echo "Cookies may have expired."
-          echo "Run save-cookies.js on your PC and update GitHub Secret."
+        run: echo "❌ Cookie refresh FAILED! Run save-cookies.js on your PC."
