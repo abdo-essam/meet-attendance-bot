@@ -1,4 +1,6 @@
-var puppeteer = require('puppeteer-core');
+var puppeteer = require('puppeteer-extra');
+var StealthPlugin = require('puppeteer-extra-plugin-stealth');
+puppeteer.use(StealthPlugin());
 var fs = require('fs');
 var path = require('path');
 var cryptoHelper = require('./crypto-helper');
