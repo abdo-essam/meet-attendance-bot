@@ -78,9 +78,8 @@ async function main() {
         '/usr/bin/chromium',
     ];
 
-    var fs2 = require('fs');
     for (var p of possiblePaths) {
-        if (fs2.existsSync(p)) {
+        if (fs.existsSync(p)) {
             chromePath = p;
             break;
         }
@@ -110,26 +109,64 @@ async function main() {
             '--disable-extensions',
             '--disable-sync',
             '--disable-translate',
-            '--no-first-run'
+            '--no-first-run',
+            '--disable-crashpad',
+            '--disable-breakpad',
+            '--disable-component-update',
+            '--disable-ipc-flooding-protection',
+            '--disable-renderer-backgrounding',
+            '--enable-features=NetworkService,NetworkServiceInProcess',
+            '--force-color-profile=srgb'
         ],
-        defaultViewport: { width: 1280, height: 720 }
+        defaultViewport: { width: 1280, height: 720 },
+        ignoreDefaultArgs: ['--enable-automation'],
+        protocolTimeout: 60000
     };
 
     if (chromePath) {
         launchOptions.executablePath = chromePath;
     }
 
-    var browser = await puppeteer.launch(launchOptions);
+    // Try launching with retry
+    var browser;
+    for (var attempt = 1; attempt <= 3; attempt++) {
+        try {
+            console.log('🚀 Launch attempt ' + attempt + '/3...');
+            browser = await puppeteer.launch(launchOptions);
+            console.log('✅ Browser launched successfully!');
+            break;
+        } catch (e) {
+            console.log('⚠️ Attempt ' + attempt + ' failed: ' + e.message);
+            if (attempt === 3) {
+                // Last resort: try without executablePath (use Puppeteer's bundled)
+                console.log('🔄 Trying with Puppeteer bundled Chrome...');
+                delete launchOptions.executablePath;
+                try {
+                    browser = await puppeteer.launch(launchOptions);
+                    console.log('✅ Browser launched with bundled Chrome!');
+                } catch (e2) {
+                    console.log('❌ All launch attempts failed!');
+                    console.log('Last error: ' + e2.message);
+                    process.exit(1);
+                }
+            }
+            await sleep(2000);
+        }
+    }
 
     var page = await browser.newPage();
 
     // Grant permissions for camera and microphone to avoid popups
-    const context = browser.defaultBrowserContext();
-    await context.overridePermissions('https://meet.google.com', [
-        'camera',
-        'microphone',
-        'notifications'
-    ]);
+    try {
+        const context = browser.defaultBrowserContext();
+        await context.overridePermissions('https://meet.google.com', [
+            'camera',
+            'microphone',
+            'notifications'
+        ]);
+    } catch (e) {
+        console.log('⚠️ Permission override failed (ok): ' + e.message);
+    }
 
     await page.setUserAgent(
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
@@ -240,13 +277,11 @@ async function main() {
 
         // Close the "microphone not found" / "camera not found" popup
         try {
-            // Look for the X/close button on the popup
             const closeSelectors = [
                 'button[aria-label="Close"]',
-                'button[aria-label="إغلاق"]',        // Arabic "Close"
+                'button[aria-label="إغلاق"]',
                 'button[aria-label="Dismiss"]',
                 '[data-mdc-dialog-action="close"]',
-                '.google-material-icons:has-text("close")',
             ];
 
             for (const sel of closeSelectors) {
@@ -261,7 +296,7 @@ async function main() {
                 } catch (e) { }
             }
 
-            // Also try clicking the X icon by evaluating text content
+            // Try clicking close/dismiss buttons by text
             const allButtons = await page.
             $$
             ('button');
@@ -278,7 +313,7 @@ async function main() {
                         ariaLabel.includes('Dismiss')
                     ) {
                         await btn.click();
-                        console.log('✅ Closed popup via button text/aria: "' + (text || ariaLabel) + '"');
+                        console.log('✅ Closed popup via button: "' + (text || ariaLabel) + '"');
                         await sleep(1000);
                         break;
                     }
@@ -302,16 +337,14 @@ async function main() {
         // ─── Step 2: Mute audio and video ───
         console.log('\n🔇 Muting microphone and camera...');
 
-        // Method 1: Keyboard shortcuts
         await page.keyboard.down('Control');
-        await page.keyboard.press('d');  // Toggle camera
-        await page.keyboard.press('e');  // Toggle microphone
+        await page.keyboard.press('d');
+        await page.keyboard.press('e');
         await page.keyboard.up('Control');
         await sleep(2000);
 
-        // Method 2: Try clicking the mic/camera toggle buttons directly
+        // Try clicking mute buttons directly
         try {
-            // Mic button (has microphone icon with warning)
             const micButtons = await page.
             $$
             ('[data-is-muted]');
@@ -340,15 +373,14 @@ async function main() {
         let inMeeting = false;
 
         // ════════════════════════════════════════
-        // METHOD A: Direct CSS selector for "Join now" / "انضم الآن" button
+        // METHOD A: Direct CSS selector for known join buttons
         // ════════════════════════════════════════
         console.log('🔍 Method A: CSS selectors...');
 
         const joinSelectors = [
-            // Google Meet known join button selectors
-            'button[jsname="Qx7uuf"]',              // "Join now" (common jsname)
-            'button[jsname="A5il2e"]',               // "Ask to join"
-            'button[data-idom-class*="nN7Gse"]',     // Join button class
+            'button[jsname="Qx7uuf"]',
+            'button[jsname="A5il2e"]',
+            'button[data-idom-class*="nN7Gse"]',
             '[role="button"][jsname="Qx7uuf"]',
             '[role="button"][jsname="A5il2e"]',
         ];
@@ -373,13 +405,23 @@ async function main() {
         if (!inMeeting) {
             console.log('🔍 Method B: Exact text match...');
 
-            // These are the EXACT texts for the join button in various languages
             const joinTexts = [
-                'انضم الآن',          // Arabic: "Join now"
-                'الانضمام الآن',       // Arabic variant
-                'Join now',            // English
-                'Ask to join',         // English
-                'طلب الانضمام',       // Arabic: "Ask to join"
+                'انضم الآن',
+                'الانضمام الآن',
+                'Join now',
+                'Ask to join',
+                'طلب الانضمام',
+            ];
+
+            // Words that should NOT be in the button (to avoid wrong buttons)
+            const excludeTexts = [
+                'طرق أخرى',
+                'Other ways',
+                'expand_more',
+                'مشاركة',
+                'Share',
+                'عرض',
+                'Present',
             ];
 
             try {
@@ -401,9 +443,22 @@ async function main() {
 
                         if (!isVisible) continue;
 
-                        console.log('   Button: "' + text + '" (visible: ' + isVisible + ')');
+                        console.log('   Button: "' + text + '"');
 
-                        // Check if button text EXACTLY matches a join text
+                        // Skip buttons with excluded text
+                        let shouldSkip = false;
+                        for (const exclude of excludeTexts) {
+                            if (text.includes(exclude)) {
+                                shouldSkip = true;
+                                break;
+                            }
+                        }
+                        if (shouldSkip) {
+                            console.log('   ⏭️ Skipping (excluded text)');
+                            continue;
+                        }
+
+                        // Check if button text matches a join text
                         for (const joinText of joinTexts) {
                             if (text === joinText || text.includes(joinText)) {
                                 console.log('✅ MATCH! Clicking: "' + text + '"');
@@ -452,10 +507,10 @@ async function main() {
         }
 
         // ════════════════════════════════════════
-        // METHOD D: page.evaluate — find the BIG blue button
+        // METHOD D: Find the BIG blue button via JS
         // ════════════════════════════════════════
         if (!inMeeting) {
-            console.log('🔍 Method D: Find large colored join button via JS evaluation...');
+            console.log('🔍 Method D: Find large blue join button...');
 
             try {
                 const clicked = await page.evaluate(() => {
@@ -466,12 +521,15 @@ async function main() {
                         const text = btn.textContent.trim();
                         const bgColor = style.backgroundColor;
 
-                        // The "Join now" button is typically:
-                        // - Large (width > 100px, height > 40px)
-                        // - Blue background
-                        // - Contains "انضم" or "Join"
+                        // Skip excluded buttons
+                        if (text.includes('طرق أخرى') || text.includes('Other ways') ||
+                            text.includes('expand_more') || text.includes('مشاركة') ||
+                            text.includes('Share')) {
+                            continue;
+                        }
+
                         const isLarge = rect.width > 100 && rect.height > 40;
-                        const isBlue = bgColor.includes('26, 115, 232') ||  // Google blue
+                        const isBlue = bgColor.includes('26, 115, 232') ||
                             bgColor.includes('rgb(26, 115, 232)') ||
                             bgColor.includes('rgb(24, 90, 188)') ||
                             bgColor.includes('rgb(66, 133, 244)');
@@ -480,7 +538,6 @@ async function main() {
                             text.includes('join');
 
                         if (isLarge && (isBlue || hasJoinText)) {
-                            console.log('Found candidate: "' + text + '" size=' + rect.width + 'x' + rect.height + ' bg=' + bgColor);
                             btn.click();
                             return text;
                         }
@@ -517,8 +574,13 @@ async function main() {
                 try {
                     const elements = await page.$x(xpath);
                     if (elements.length > 0) {
-                        // Click the FIRST matching button
                         const text = await page.evaluate(el => el.textContent.trim(), elements[0]);
+
+                        // Skip excluded buttons
+                        if (text.includes('طرق أخرى') || text.includes('Other ways') || text.includes('expand_more')) {
+                            continue;
+                        }
+
                         console.log('✅ Found via XPath: "' + text + '"');
                         await elements[0].click();
                         await sleep(5000);
@@ -535,7 +597,6 @@ async function main() {
         if (!inMeeting) {
             console.log('🔍 Method F: Tab navigation + Enter...');
 
-            // Tab through the page elements to reach the join button
             for (let i = 0; i < 15; i++) {
                 await page.keyboard.press('Tab');
                 await sleep(300);
@@ -561,16 +622,15 @@ async function main() {
         let joinVerified = false;
 
         try {
-            // Check for elements that only appear INSIDE a meeting
             const inMeetingIndicators = [
                 '[data-meeting-title]',
                 '[data-call-active]',
                 'button[aria-label*="Leave"]',
-                'button[aria-label*="مغادرة"]',        // Arabic "Leave"
+                'button[aria-label*="مغادرة"]',
                 'button[aria-label*="End call"]',
-                'button[aria-label*="إنهاء"]',         // Arabic "End"
+                'button[aria-label*="إنهاء"]',
                 '[data-self-name]',
-                'div[jsname="EaZ7Me"]',                // People panel
+                'div[jsname="EaZ7Me"]',
             ];
 
             for (const indicator of inMeetingIndicators) {
@@ -583,7 +643,6 @@ async function main() {
             }
 
             if (!joinVerified) {
-                // Check page content for meeting indicators
                 const pageContent = await page.content();
                 if (
                     pageContent.includes('data-meeting-title') ||
@@ -597,8 +656,7 @@ async function main() {
             }
 
             if (!joinVerified) {
-                console.log('⚠️ Could not confirm meeting join. Screenshots will show actual state.');
-                console.log('   The bot will continue running regardless.');
+                console.log('⚠️ Could not confirm meeting join. Bot will continue running.');
             }
         } catch (e) {
             console.log('⚠️ Verification error: ' + e.message);

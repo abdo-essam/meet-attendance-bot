@@ -69,13 +69,11 @@ async function refreshCookies() {
 
     if (cookies.length < 10) {
         console.log('⚠️ WARNING: Only ' + cookies.length + ' cookies. This is suspiciously low.');
-        console.log('   A proper Google session usually has 50-150+ cookies.');
     }
 
     // ─── Launch Browser ───
     console.log('\n🚀 Launching browser...');
 
-    // Find Chrome executable
     var chromePath = null;
     var possiblePaths = [
         '/usr/bin/google-chrome-stable',
@@ -112,16 +110,47 @@ async function refreshCookies() {
             '--disable-extensions',
             '--disable-sync',
             '--disable-translate',
-            '--no-first-run'
+            '--no-first-run',
+            '--disable-crashpad',
+            '--disable-breakpad',
+            '--disable-component-update',
+            '--disable-ipc-flooding-protection',
+            '--disable-renderer-backgrounding',
+            '--enable-features=NetworkService,NetworkServiceInProcess',
+            '--force-color-profile=srgb'
         ],
-        defaultViewport: { width: 1280, height: 720 }
+        defaultViewport: { width: 1280, height: 720 },
+        ignoreDefaultArgs: ['--enable-automation'],
+        protocolTimeout: 60000
     };
 
     if (chromePath) {
         launchOptions.executablePath = chromePath;
     }
 
-    var browser = await puppeteer.launch(launchOptions);
+    var browser;
+    for (var attempt = 1; attempt <= 3; attempt++) {
+        try {
+            console.log('🚀 Launch attempt ' + attempt + '/3...');
+            browser = await puppeteer.launch(launchOptions);
+            console.log('✅ Browser launched successfully!');
+            break;
+        } catch (e) {
+            console.log('⚠️ Attempt ' + attempt + ' failed: ' + e.message);
+            if (attempt === 3) {
+                console.log('🔄 Trying with Puppeteer bundled Chrome...');
+                delete launchOptions.executablePath;
+                try {
+                    browser = await puppeteer.launch(launchOptions);
+                    console.log('✅ Browser launched with bundled Chrome!');
+                } catch (e2) {
+                    console.log('❌ All launch attempts failed!');
+                    process.exit(1);
+                }
+            }
+            await sleep(2000);
+        }
+    }
 
     var page = await browser.newPage();
 
@@ -169,14 +198,12 @@ async function refreshCookies() {
         var url = page.url();
         console.log('📍 URL: ' + url);
 
-        // Check if session is alive
         var isAlive =
             url.includes('myaccount.google.com') ||
             url.includes('accounts.google.com/SignOutOptions') ||
             url.includes('google.com/account/about') ||
             url.includes('accounts.google.com/');
 
-        // Check if session is dead (redirected to login)
         var isDead =
             url.includes('ServiceLogin') ||
             url.includes('signin/v2') ||
@@ -194,7 +221,7 @@ async function refreshCookies() {
         } else {
             console.log('⚠️ Unknown state: ' + url);
             console.log('   Continuing anyway to attempt cookie refresh...');
-            sessionAlive = true; // try to continue
+            sessionAlive = true;
         }
     } catch (e) {
         console.log('⚠️ Could not visit Google Accounts: ' + e.message);
@@ -262,7 +289,6 @@ async function refreshCookies() {
     if (freshCookies.length < 10) {
         console.log('⚠️ Only ' + freshCookies.length + ' cookies extracted.');
         console.log('   This is too few — skipping save to protect existing cookies.');
-        console.log('   Existing encrypted cookies will NOT be overwritten.');
         await browser.close();
         process.exit(1);
     }
