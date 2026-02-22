@@ -1,8 +1,3 @@
-// ============================================
-//  DAILY KEEPALIVE — Refreshes Google session
-//  Runs every day, visits Google, saves cookies
-// ============================================
-
 var puppeteer = require('puppeteer-extra');
 var StealthPlugin = require('puppeteer-extra-plugin-stealth');
 puppeteer.use(StealthPlugin());
@@ -23,25 +18,19 @@ async function refreshCookies() {
     console.log('🔄 Cookie Refresh / Keepalive');
     console.log('═'.repeat(50));
 
-    // ─── Load existing cookies ───
     var cookies = [];
 
-    // Source 1: Try encrypted file first (freshest)
     if (fs.existsSync(COOKIES_FILE)) {
-        console.log('🍪 Loading encrypted cookies...');
         try {
             var encrypted = fs.readFileSync(COOKIES_FILE, 'utf8');
-            var decrypted = cryptoHelper.decrypt(encrypted, COOKIE_PASSWORD);
-            cookies = JSON.parse(decrypted);
+            cookies = JSON.parse(cryptoHelper.decrypt(encrypted, COOKIE_PASSWORD));
             console.log('✅ Loaded ' + cookies.length + ' cookies from encrypted file');
         } catch (e) {
             console.log('⚠️ Failed to decrypt: ' + e.message);
         }
     }
 
-    // Source 2: Try raw cookies file
     if (cookies.length === 0 && fs.existsSync(RAW_COOKIES)) {
-        console.log('🍪 Loading raw cookies.json...');
         try {
             cookies = JSON.parse(fs.readFileSync(RAW_COOKIES, 'utf8'));
             console.log('✅ Loaded ' + cookies.length + ' cookies from raw file');
@@ -50,9 +39,7 @@ async function refreshCookies() {
         }
     }
 
-    // Source 3: Try base64 from env (GitHub Secret)
     if (cookies.length === 0 && process.env.GOOGLE_COOKIES) {
-        console.log('🍪 Loading cookies from GitHub Secret...');
         try {
             var decoded = Buffer.from(process.env.GOOGLE_COOKIES, 'base64').toString('utf8');
             cookies = JSON.parse(decoded);
@@ -63,135 +50,27 @@ async function refreshCookies() {
     }
 
     if (cookies.length === 0) {
-        console.log('❌ No cookies found! Run save-cookies.js on your PC first.');
+        console.log('❌ No cookies found!');
         process.exit(1);
     }
 
-    if (cookies.length < 10) {
-        console.log('⚠️ WARNING: Only ' + cookies.length + ' cookies. This is suspiciously low.');
-    }
-
-    // ─── Launch Browser ───
+    // ─── Launch Browser (minimal args) ───
     console.log('\n🚀 Launching browser...');
 
-    var chromePath = null;
-    var possiblePaths = [
-        '/usr/bin/google-chrome-stable',
-        '/usr/bin/google-chrome',
-        '/usr/bin/chromium-browser',
-        '/usr/bin/chromium',
-    ];
-
-    for (var p of possiblePaths) {
-        if (fs.existsSync(p)) {
-            chromePath = p;
-            break;
-        }
-    }
-
-    if (chromePath) {
-        console.log('🌐 Using Chrome at: ' + chromePath);
-    } else {
-        console.log('🌐 No system Chrome found, using Puppeteer bundled Chrome');
-    }
-
-    var launchArgs = [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-        '--no-zygote',
-        '--disable-blink-features=AutomationControlled',
-        '--disable-features=VizDisplayCompositor',
-        '--disable-background-networking',
-        '--disable-default-apps',
-        '--disable-extensions',
-        '--disable-sync',
-        '--disable-translate',
-        '--no-first-run',
-        '--disable-component-update',
-        '--disable-ipc-flooding-protection',
-        '--disable-renderer-backgrounding',
-        '--enable-features=NetworkService,NetworkServiceInProcess',
-        '--force-color-profile=srgb',
-        '--disable-field-trial-config',
-        '--disable-background-timer-throttling',
-        '--disable-backgrounding-occluded-windows',
-        '--disable-hang-monitor',
-        '--disable-prompt-on-repost',
-        '--metrics-recording-only',
-        '--no-default-browser-check',
-        '--window-size=1280,720'
-    ];
-
-    var browser;
-    var strategies = [];
-
-    if (chromePath) {
-        strategies.push({
-            name: 'System Chrome (headless=new)',
-            options: {
-                headless: 'new',
-                executablePath: chromePath,
-                args: launchArgs,
-                defaultViewport: { width: 1280, height: 720 },
-                ignoreDefaultArgs: ['--enable-automation'],
-                protocolTimeout: 60000
-            }
-        });
-
-        strategies.push({
-            name: 'System Chrome (headless=true)',
-            options: {
-                headless: true,
-                executablePath: chromePath,
-                args: launchArgs,
-                defaultViewport: { width: 1280, height: 720 },
-                ignoreDefaultArgs: ['--enable-automation', '--disable-extensions'],
-                protocolTimeout: 60000
-            }
-        });
-
-        strategies.push({
-            name: 'System Chrome (--headless=old)',
-            options: {
-                headless: false,
-                executablePath: chromePath,
-                args: [...launchArgs, '--headless=old'],
-                defaultViewport: { width: 1280, height: 720 },
-                ignoreDefaultArgs: ['--enable-automation'],
-                protocolTimeout: 60000
-            }
-        });
-    }
-
-    strategies.push({
-        name: 'Puppeteer bundled Chrome',
-        options: {
-            headless: 'new',
-            args: launchArgs,
-            defaultViewport: { width: 1280, height: 720 },
-            ignoreDefaultArgs: ['--enable-automation'],
-            protocolTimeout: 60000
-        }
+    var browser = await puppeteer.launch({
+        headless: 'new',
+        args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-blink-features=AutomationControlled',
+            '--window-size=1280,720'
+        ],
+        defaultViewport: { width: 1280, height: 720 },
+        protocolTimeout: 120000
     });
 
-    for (var i = 0; i < strategies.length; i++) {
-        var strategy = strategies[i];
-        try {
-            console.log('🚀 Strategy ' + (i + 1) + '/' + strategies.length + ': ' + strategy.name + '...');
-            browser = await puppeteer.launch(strategy.options);
-            console.log('✅ Browser launched successfully with: ' + strategy.name);
-            break;
-        } catch (e) {
-            console.log('⚠️ ' + strategy.name + ' failed: ' + e.message.split('\n')[0]);
-            if (i === strategies.length - 1) {
-                console.log('❌ ALL launch strategies failed!');
-                process.exit(1);
-            }
-            await sleep(2000);
-        }
-    }
+    console.log('✅ Browser launched!');
 
     var page = await browser.newPage();
 
@@ -199,11 +78,8 @@ async function refreshCookies() {
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
         '(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
     );
-    await page.setExtraHTTPHeaders({
-        'Accept-Language': 'en-US,en;q=0.9'
-    });
+    await page.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9' });
 
-    // ─── Load cookies into browser ───
     try {
         const client = await page.target().createCDPSession();
         const validCookies = cookies.map(c => {
@@ -213,37 +89,21 @@ async function refreshCookies() {
             return copy;
         });
         await client.send('Network.setCookies', { cookies: validCookies });
-        console.log('✅ Cookies loaded into browser via CDP');
+        console.log('✅ Cookies loaded');
     } catch (e) {
-        console.log('⚠️ CDP cookie set error: ' + e.message);
-        try {
-            await page.setCookie(...cookies);
-            console.log('✅ Cookies loaded via fallback method');
-        } catch (err) {
-            console.log('⚠️ Fallback cookie set also failed: ' + err.message);
-        }
+        try { await page.setCookie(...cookies); } catch (err) { }
     }
 
-    // ─── Visit Google Accounts to verify & refresh session ───
+    // ─── Visit Google Accounts ───
     console.log('\n🌐 Visiting Google Accounts...');
-
     var sessionAlive = false;
 
     try {
-        await page.goto('https://myaccount.google.com/', {
-            waitUntil: 'networkidle2',
-            timeout: 30000
-        });
+        await page.goto('https://myaccount.google.com/', { waitUntil: 'networkidle2', timeout: 30000 });
         await sleep(4000);
 
         var url = page.url();
         console.log('📍 URL: ' + url);
-
-        var isAlive =
-            url.includes('myaccount.google.com') ||
-            url.includes('accounts.google.com/SignOutOptions') ||
-            url.includes('google.com/account/about') ||
-            url.includes('accounts.google.com/');
 
         var isDead =
             url.includes('ServiceLogin') ||
@@ -252,66 +112,36 @@ async function refreshCookies() {
             url.includes('accounts.google.com/v3/signin');
 
         if (isDead) {
-            console.log('❌ Session EXPIRED! Redirected to sign-in page.');
-            console.log('👉 Run save-cookies.js on your PC and update GOOGLE_COOKIES secret.');
+            console.log('❌ Session EXPIRED!');
             await browser.close();
             process.exit(1);
-        } else if (isAlive) {
-            console.log('✅ Google session is ALIVE!');
-            sessionAlive = true;
-        } else {
-            console.log('⚠️ Unknown state: ' + url);
-            console.log('   Continuing anyway to attempt cookie refresh...');
-            sessionAlive = true;
         }
+
+        console.log('✅ Google session is ALIVE!');
+        sessionAlive = true;
     } catch (e) {
         console.log('⚠️ Could not visit Google Accounts: ' + e.message);
-        console.log('   Continuing with other services...');
     }
 
-    // ─── Visit Google Meet to refresh Meet-specific cookies ───
-    console.log('\n🎥 Visiting Google Meet...');
+    // ─── Visit services ───
+    var services = [
+        { name: 'Google Meet', url: 'https://meet.google.com' },
+        { name: 'Gmail', url: 'https://mail.google.com' },
+        { name: 'Google.com', url: 'https://www.google.com' }
+    ];
 
-    try {
-        await page.goto('https://meet.google.com', {
-            waitUntil: 'networkidle2',
-            timeout: 30000
-        });
-        await sleep(3000);
-        console.log('✅ Meet page loaded: ' + page.url());
-    } catch (e) {
-        console.log('⚠️ Meet visit failed: ' + e.message);
+    for (var svc of services) {
+        console.log('\n🌐 Visiting ' + svc.name + '...');
+        try {
+            await page.goto(svc.url, { waitUntil: 'networkidle2', timeout: 30000 });
+            await sleep(3000);
+            console.log('✅ ' + svc.name + ' loaded');
+        } catch (e) {
+            console.log('⚠️ ' + svc.name + ' failed (ok)');
+        }
     }
 
-    // ─── Visit Gmail to refresh Gmail-specific cookies ───
-    console.log('\n📧 Visiting Gmail...');
-
-    try {
-        await page.goto('https://mail.google.com', {
-            waitUntil: 'networkidle2',
-            timeout: 30000
-        });
-        await sleep(3000);
-        console.log('✅ Gmail loaded: ' + page.url());
-    } catch (e) {
-        console.log('⚠️ Gmail visit failed (ok): ' + e.message);
-    }
-
-    // ─── Visit Google.com for general cookies ───
-    console.log('\n🔍 Visiting Google.com...');
-
-    try {
-        await page.goto('https://www.google.com', {
-            waitUntil: 'networkidle2',
-            timeout: 30000
-        });
-        await sleep(2000);
-        console.log('✅ Google.com loaded');
-    } catch (e) {
-        console.log('⚠️ Google.com visit failed (ok): ' + e.message);
-    }
-
-    // ─── Extract fresh cookies ───
+    // ─── Extract & save cookies ───
     console.log('\n🍪 Extracting fresh cookies...');
 
     var freshCookies = [];
@@ -326,47 +156,33 @@ async function refreshCookies() {
         process.exit(1);
     }
 
-    // ─── Validate before saving ───
     if (freshCookies.length < 10) {
-        console.log('⚠️ Only ' + freshCookies.length + ' cookies extracted.');
-        console.log('   This is too few — skipping save to protect existing cookies.');
+        console.log('⚠️ Too few cookies — skipping save');
         await browser.close();
         process.exit(1);
     }
 
-    // ─── Save encrypted cookies ───
-    console.log('\n💾 Saving cookies...');
-
     var cookiesDir = path.join(__dirname, '..', 'cookies');
-    if (!fs.existsSync(cookiesDir)) {
-        fs.mkdirSync(cookiesDir, { recursive: true });
-    }
+    if (!fs.existsSync(cookiesDir)) fs.mkdirSync(cookiesDir, { recursive: true });
 
     try {
-        var cookiesJson = JSON.stringify(freshCookies);
-        var encryptedData = cryptoHelper.encrypt(cookiesJson, COOKIE_PASSWORD);
+        var encryptedData = cryptoHelper.encrypt(JSON.stringify(freshCookies), COOKIE_PASSWORD);
         fs.writeFileSync(COOKIES_FILE, encryptedData, 'utf8');
-        console.log('🔒 Saved encrypted cookies: ' + COOKIES_FILE);
+        console.log('🔒 Saved encrypted cookies');
     } catch (e) {
-        console.log('❌ Failed to save encrypted cookies: ' + e.message);
+        console.log('❌ Failed to save encrypted: ' + e.message);
     }
 
-    // ─── Save raw backup for bot.js ───
     try {
         fs.writeFileSync(RAW_COOKIES, JSON.stringify(freshCookies), 'utf8');
-        console.log('📄 Saved raw cookies: ' + RAW_COOKIES);
-    } catch (e) {
-        console.log('⚠️ Failed to save raw cookies: ' + e.message);
-    }
+        console.log('📄 Saved raw cookies');
+    } catch (e) { }
 
-    // ─── Done ───
     await browser.close();
 
     console.log('\n' + '═'.repeat(50));
-    console.log('✅ Cookies refreshed successfully!');
-    console.log('   Cookies count: ' + freshCookies.length);
-    console.log('   Session alive: ' + (sessionAlive ? 'YES ✅' : 'UNKNOWN ⚠️'));
-    console.log('   Next refresh:  tomorrow at 3:00 AM UTC');
+    console.log('✅ Cookies refreshed! (' + freshCookies.length + ')');
+    console.log('   Session: ' + (sessionAlive ? 'ALIVE ✅' : 'UNKNOWN ⚠️'));
     console.log('═'.repeat(50));
 }
 
