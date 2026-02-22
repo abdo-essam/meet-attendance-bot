@@ -21,7 +21,7 @@ on:
       duration_minutes:
         description: 'Duration in minutes (max 350)'
         required: true
-        default: '2'
+        default: '1'
 
 jobs:
   attend:
