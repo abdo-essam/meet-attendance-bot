@@ -46,15 +46,24 @@ async function saveCookies() {
 
     // Polling to wait until URL indicates successful sign-in
     let isLoggedIn = false;
-    for (let i = 0; i < 60; i++) { // wait up to 5 minutes (60 * 5 sec)
+    for (let i = 0; i < 180; i++) { // wait up to 15 minutes
         await new Promise(r => setTimeout(r, 5000));
         try {
-            const url = page.url();
-            if (url.includes('myaccount.google.com')) {
-                isLoggedIn = true;
-                break;
+            // Re-fetch all pages in case the user opened a new tab or popup
+            const currentPages = await browser.pages();
+            for (let p of currentPages) {
+                const url = p.url();
+                console.log(`[Timer] Checking tab URL: ${url}`);
+
+                if (url.includes('myaccount.google.com') || url.includes('myaccount.google') || url.includes('ManageAccount')) {
+                    isLoggedIn = true;
+                    // Switch to the correct page for CDP extraction
+                    page = p;
+                    break;
+                }
             }
-        } catch (e) { /* page might be closed */ break; }
+            if (isLoggedIn) break;
+        } catch (e) { /* ignore */ }
     }
 
     if (!isLoggedIn) {

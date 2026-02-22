@@ -107,6 +107,9 @@ async function main() {
     if (!currUrl.includes('myaccount')) {
         console.log(`❌ Google didn't recognize cookies! Redirected to: ${currUrl}`);
         console.log('⚠️ The cookies may have expired or Google is blocking this login.');
+        console.log('🛑 Aborting to prevent overwriting saved cookies with empty ones.');
+        await browser.close();
+        process.exit(1);
     } else {
         console.log('✅ Google session verified! Profile is active.');
     }
