@@ -1,6 +1,4 @@
-var puppeteer = require('puppeteer-extra');
-var StealthPlugin = require('puppeteer-extra-plugin-stealth');
-puppeteer.use(StealthPlugin());
+var vanillaPuppeteer = require('puppeteer');
 var fs = require('fs');
 var path = require('path');
 var cryptoHelper = require('./crypto-helper');
@@ -11,68 +9,6 @@ var RAW_COOKIES = path.join(__dirname, 'cookies.json');
 
 function sleep(ms) {
     return new Promise(function (r) { setTimeout(r, ms); });
-}
-
-async function launchBrowser() {
-    var minimalArgs = [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-blink-features=AutomationControlled',
-        '--window-size=1280,720'
-    ];
-
-    var chromePath = null;
-    var possiblePaths = [
-        '/usr/bin/google-chrome-stable',
-        '/usr/bin/google-chrome',
-        '/usr/bin/chromium-browser',
-        '/usr/bin/chromium',
-    ];
-    for (var p of possiblePaths) {
-        if (fs.existsSync(p)) { chromePath = p; break; }
-    }
-
-    var puppeteerChrome = null;
-    try {
-        puppeteerChrome = require('puppeteer').executablePath();
-        if (!fs.existsSync(puppeteerChrome)) puppeteerChrome = null;
-    } catch (e) { }
-
-    var strategies = [];
-
-    if (puppeteerChrome) {
-        strategies.push({ name: 'Puppeteer Chrome', opts: { headless: 'new', executablePath: puppeteerChrome, args: minimalArgs } });
-        strategies.push({ name: 'Puppeteer Chrome (old)', opts: { headless: true, executablePath: puppeteerChrome, args: minimalArgs } });
-    }
-    if (chromePath) {
-        strategies.push({ name: 'System Chrome', opts: { headless: 'new', executablePath: chromePath, args: minimalArgs } });
-        strategies.push({ name: 'System Chrome (old)', opts: { headless: true, executablePath: chromePath, args: minimalArgs } });
-    }
-    strategies.push({ name: 'Auto-detect', opts: { headless: 'new', args: minimalArgs } });
-    strategies.push({ name: 'Auto-detect (old)', opts: { headless: true, args: minimalArgs } });
-
-    console.log('System Chrome: ' + (chromePath || 'NONE'));
-    console.log('Puppeteer Chrome: ' + (puppeteerChrome || 'NONE'));
-
-    for (var i = 0; i < strategies.length; i++) {
-        try {
-            console.log('🚀 [' + (i+1) + '/' + strategies.length + '] ' + strategies[i].name);
-            var browser = await puppeteer.launch({
-                ...strategies[i].opts,
-                defaultViewport: { width: 1280, height: 720 },
-                protocolTimeout: 120000,
-                ignoreDefaultArgs: ['--enable-automation']
-            });
-            console.log('✅ ' + strategies[i].name + ' worked!');
-            return browser;
-        } catch (e) {
-            console.log('❌ ' + e.message.split('\n')[0]);
-            await sleep(1000);
-        }
-    }
-
-    throw new Error('ALL launch strategies failed');
 }
 
 async function refreshCookies() {
@@ -103,8 +39,33 @@ async function refreshCookies() {
     if (cookies.length === 0) { console.log('❌ No cookies!'); process.exit(1); }
 
     console.log('\n🚀 Launching browser...');
-    var browser = await launchBrowser();
+
+    var browser = await vanillaPuppeteer.launch({
+        headless: 'new',
+        args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-blink-features=AutomationControlled',
+            '--window-size=1280,720'
+        ],
+        defaultViewport: { width: 1280, height: 720 },
+        protocolTimeout: 120000
+    });
+
+    console.log('✅ Browser launched!');
+
     var page = await browser.newPage();
+
+    // Apply stealth manually
+    try {
+        await page.evaluateOnNewDocument(() => {
+            Object.defineProperty(navigator, 'webdriver', { get: () => false });
+            window.navigator.chrome = { runtime: {} };
+            Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+            Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+        });
+    } catch (e) { }
 
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36');
     await page.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9' });
@@ -154,7 +115,7 @@ async function refreshCookies() {
         console.log('✅ ' + fresh.length + ' cookies');
     } catch (e) { console.log('❌ ' + e.message); await browser.close(); process.exit(1); }
 
-    if (fresh.length < 10) { console.log('⚠️ Too few, skipping save'); await browser.close(); process.exit(1); }
+    if (fresh.length < 10) { console.log('⚠️ Too few'); await browser.close(); process.exit(1); }
 
     var cookiesDir = path.join(__dirname, '..', 'cookies');
     if (!fs.existsSync(cookiesDir)) fs.mkdirSync(cookiesDir, { recursive: true });

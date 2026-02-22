@@ -1,6 +1,10 @@
-var puppeteer = require('puppeteer-extra');
+// Use regular puppeteer for launching (it works!)
+var vanillaPuppeteer = require('puppeteer');
+
+// Use puppeteer-extra stealth for page-level evasion
+var { PuppeteerExtraPlugin } = require('puppeteer-extra-plugin');
 var StealthPlugin = require('puppeteer-extra-plugin-stealth');
-puppeteer.use(StealthPlugin());
+
 var fs = require('fs');
 var path = require('path');
 var cryptoHelper = require('./crypto-helper');
@@ -10,100 +14,6 @@ var durationMinutes = parseInt(process.env.DURATION_MINUTES || '120');
 
 async function sleep(ms) {
     return new Promise(r => setTimeout(r, ms));
-}
-
-async function launchBrowser() {
-    var minimalArgs = [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--use-fake-ui-for-media-stream',
-        '--use-fake-device-for-media-stream',
-        '--auto-accept-camera-and-microphone-capture',
-        '--disable-blink-features=AutomationControlled',
-        '--window-size=1280,720'
-    ];
-
-    // Find system Chrome
-    var chromePath = null;
-    var possiblePaths = [
-        '/usr/bin/google-chrome-stable',
-        '/usr/bin/google-chrome',
-        '/usr/bin/chromium-browser',
-        '/usr/bin/chromium',
-    ];
-    for (var p of possiblePaths) {
-        if (fs.existsSync(p)) {
-            chromePath = p;
-            break;
-        }
-    }
-
-    // Find Puppeteer's bundled Chrome
-    var puppeteerChrome = null;
-    try {
-        puppeteerChrome = require('puppeteer').executablePath();
-        if (!fs.existsSync(puppeteerChrome)) puppeteerChrome = null;
-    } catch (e) { }
-
-    // Build list of strategies
-    var strategies = [];
-
-    if (puppeteerChrome) {
-        strategies.push({
-            name: 'Puppeteer Chrome (headless=new)',
-            opts: { headless: 'new', executablePath: puppeteerChrome, args: minimalArgs }
-        });
-        strategies.push({
-            name: 'Puppeteer Chrome (headless=true)',
-            opts: { headless: true, executablePath: puppeteerChrome, args: minimalArgs }
-        });
-    }
-
-    if (chromePath) {
-        strategies.push({
-            name: 'System Chrome (headless=new)',
-            opts: { headless: 'new', executablePath: chromePath, args: minimalArgs }
-        });
-        strategies.push({
-            name: 'System Chrome (headless=true)',
-            opts: { headless: true, executablePath: chromePath, args: minimalArgs }
-        });
-    }
-
-    // Auto-detect (no executablePath)
-    strategies.push({
-        name: 'Auto-detect Chrome',
-        opts: { headless: 'new', args: minimalArgs }
-    });
-    strategies.push({
-        name: 'Auto-detect Chrome (headless=true)',
-        opts: { headless: true, args: minimalArgs }
-    });
-
-    console.log('Found system Chrome: ' + (chromePath || 'NONE'));
-    console.log('Found Puppeteer Chrome: ' + (puppeteerChrome || 'NONE'));
-    console.log('Strategies to try: ' + strategies.length);
-
-    for (var i = 0; i < strategies.length; i++) {
-        var s = strategies[i];
-        try {
-            console.log('\n🚀 [' + (i+1) + '/' + strategies.length + '] ' + s.name + '...');
-            var browser = await puppeteer.launch({
-                ...s.opts,
-                defaultViewport: { width: 1280, height: 720 },
-                protocolTimeout: 120000,
-                ignoreDefaultArgs: ['--enable-automation']
-            });
-            console.log('✅ SUCCESS: ' + s.name);
-            return browser;
-        } catch (e) {
-            console.log('❌ FAILED: ' + e.message.split('\n')[0]);
-            await sleep(1000);
-        }
-    }
-
-    throw new Error('ALL browser launch strategies failed!');
 }
 
 async function main() {
@@ -153,11 +63,61 @@ async function main() {
         process.exit(1);
     }
 
-    // ─── Launch Browser ───
+    // ─── Launch Browser using vanilla puppeteer ───
     console.log('\n🚀 Launching browser...');
-    var browser = await launchBrowser();
+    console.log('Puppeteer Chrome: ' + vanillaPuppeteer.executablePath());
+    console.log('Exists: ' + fs.existsSync(vanillaPuppeteer.executablePath()));
+
+    var browser = await vanillaPuppeteer.launch({
+        headless: 'new',
+        args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--use-fake-ui-for-media-stream',
+            '--use-fake-device-for-media-stream',
+            '--auto-accept-camera-and-microphone-capture',
+            '--disable-blink-features=AutomationControlled',
+            '--window-size=1280,720'
+        ],
+        defaultViewport: { width: 1280, height: 720 },
+        protocolTimeout: 120000
+    });
+
+    console.log('✅ Browser launched!');
 
     var page = await browser.newPage();
+
+    // ─── Apply stealth manually via page-level evasion ───
+    try {
+        await page.evaluateOnNewDocument(() => {
+            // Hide webdriver
+            Object.defineProperty(navigator, 'webdriver', { get: () => false });
+
+            // Hide automation
+            window.navigator.chrome = { runtime: {} };
+
+            // Fake plugins
+            Object.defineProperty(navigator, 'plugins', {
+                get: () => [1, 2, 3, 4, 5]
+            });
+
+            // Fake languages
+            Object.defineProperty(navigator, 'languages', {
+                get: () => ['en-US', 'en', 'ar']
+            });
+
+            // Hide Chrome headless signals
+            const originalQuery = window.navigator.permissions.query;
+            window.navigator.permissions.query = (parameters) =>
+                parameters.name === 'notifications'
+                    ? Promise.resolve({ state: Notification.permission })
+                    : originalQuery(parameters);
+        });
+        console.log('✅ Stealth evasion applied');
+    } catch (e) {
+        console.log('⚠️ Stealth evasion: ' + e.message);
+    }
 
     try {
         const context = browser.defaultBrowserContext();
@@ -232,7 +192,7 @@ async function main() {
         console.log('⚠️ Navigation timeout, continuing...');
     }
 
-    // ─── Wait for join page with smart polling ───
+    // ─── Wait for join page ───
     console.log('⏳ Waiting for meeting page...');
 
     let joinPageState = 'unknown';
@@ -262,32 +222,28 @@ async function main() {
             break;
         }
 
-        // If on Meet homepage, try navigating again
         if (url === 'https://meet.google.com/' || url === 'https://meet.google.com') {
             if (w === 5 || w === 15) {
-                console.log('⚠️ [' + (w+1) + '] On Meet homepage, retrying navigation...');
+                console.log('⚠️ [' + (w+1) + '] On homepage, retrying...');
                 try { await page.goto(meetLink, { waitUntil: 'networkidle2', timeout: 30000 }); } catch (e) { }
             }
         }
 
-        if (w % 5 === 0) console.log('⏳ [' + (w+1) + '/30] Waiting... URL: ' + url.substring(0, 60));
+        if (w % 5 === 0) console.log('⏳ [' + (w+1) + '/30] URL: ' + url.substring(0, 60));
     }
 
     try { await page.screenshot({ path: path.join(reportsDir, 'step1_before_join.png') }); } catch (e) { }
 
-    // ─── DISMISS POPUPS ───
+    // ─── Dismiss popups ───
     console.log('\n🔕 Dismissing popups...');
-
-    // Press Escape multiple times
     for (let esc = 0; esc < 3; esc++) {
         await page.keyboard.press('Escape');
         await sleep(300);
     }
 
-    // Click any dismiss/close/got-it buttons
     try {
         await page.evaluate(() => {
-            var dismissTexts = ['close', 'Close', 'إغلاق', 'Dismiss', 'Got it', 'حسنًا', 'OK', '✕', '×'];
+            var dismissTexts = ['close', 'Close', 'إغلاق', 'Dismiss', 'Got it', 'حسنًا', 'OK'];
             var buttons = document.querySelectorAll('button, [role="button"]');
             for (var btn of buttons) {
                 var text = btn.textContent.trim();
@@ -301,11 +257,10 @@ async function main() {
             }
         });
     } catch (e) { }
-
     await sleep(500);
 
-    // ─── MUTE ───
-    console.log('🔇 Muting mic & camera...');
+    // ─── Mute ───
+    console.log('🔇 Muting...');
     await page.keyboard.down('Control');
     await page.keyboard.press('d');
     await page.keyboard.press('e');
@@ -319,7 +274,7 @@ async function main() {
 
     let clickedButton = null;
 
-    // METHOD 1: Direct DOM click (fastest)
+    // METHOD 1: DOM click
     try {
         clickedButton = await page.evaluate(() => {
             var joinTexts = ['انضم الآن', 'Join now', 'Ask to join', 'طلب الانضمام', 'الانضمام الآن'];
@@ -351,8 +306,7 @@ async function main() {
             }
 
             // Fallback: largest blue button
-            var best = null;
-            var bestArea = 0;
+            var best = null, bestArea = 0;
             for (var btn of allBtns) {
                 var rect = btn.getBoundingClientRect();
                 var style = window.getComputedStyle(btn);
@@ -381,7 +335,7 @@ async function main() {
         });
 
         if (clickedButton) {
-            console.log('📋 Buttons found: ' + JSON.stringify(clickedButton.buttons));
+            console.log('📋 Buttons: ' + JSON.stringify(clickedButton.buttons));
             if (clickedButton.clicked) {
                 console.log('✅ Clicked: "' + clickedButton.clicked + '"');
             } else {
@@ -392,26 +346,22 @@ async function main() {
         console.log('⚠️ Method 1 error: ' + e.message);
     }
 
-    // Wait for join to process
     await sleep(8000);
 
-    // METHOD 2: Check if still on join page and retry
+    // METHOD 2: Retry if still on join page
     try {
         var stillOnJoin = await page.evaluate(() => {
             return document.body.innerText.includes('انضم الآن') || document.body.innerText.includes('Join now');
         });
-
         if (stillOnJoin) {
-            console.log('⚠️ Still on join page, clicking again...');
+            console.log('⚠️ Still on join page, retrying...');
             await page.keyboard.press('Escape');
             await sleep(500);
-
             await page.evaluate(() => {
-                var buttons = document.querySelectorAll('button');
-                for (var btn of buttons) {
-                    var text = btn.textContent.trim();
-                    if (text === 'انضم الآن' || text === 'Join now' ||
-                        text === 'Ask to join' || text === 'طلب الانضمام') {
+                var btns = document.querySelectorAll('button');
+                for (var btn of btns) {
+                    var t = btn.textContent.trim();
+                    if (t === 'انضم الآن' || t === 'Join now' || t === 'Ask to join' || t === 'طلب الانضمام') {
                         btn.focus();
                         btn.click();
                         btn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
@@ -423,27 +373,22 @@ async function main() {
         }
     } catch (e) { }
 
-    // METHOD 3: Keyboard navigation
+    // METHOD 3: Keyboard Tab + Enter
     try {
         var stillOnJoin2 = await page.evaluate(() => {
             return document.body.innerText.includes('انضم الآن') || document.body.innerText.includes('Join now');
         });
-
         if (stillOnJoin2) {
-            console.log('⚠️ Still on join page, trying keyboard...');
-            // Tab to the join button and press Enter
+            console.log('⚠️ Trying keyboard navigation...');
             for (let t = 0; t < 20; t++) {
                 await page.keyboard.press('Tab');
                 await sleep(200);
-
-                // Check if focused element is the join button
-                var focusedText = await page.evaluate(() => {
+                var focused = await page.evaluate(() => {
                     var el = document.activeElement;
                     return el ? el.textContent.trim() : '';
                 }).catch(() => '');
-
-                if (focusedText.includes('انضم') || focusedText.includes('Join')) {
-                    console.log('✅ Focused on: "' + focusedText + '" — pressing Enter');
+                if (focused.includes('انضم') || focused.includes('Join')) {
+                    console.log('✅ Focused: "' + focused + '" → Enter');
                     await page.keyboard.press('Enter');
                     await sleep(8000);
                     break;
@@ -455,23 +400,29 @@ async function main() {
     try { await page.screenshot({ path: path.join(reportsDir, 'step3_after_join.png') }); } catch (e) { }
 
     // ─── Check result ───
-    console.log('\n🔍 Checking join result...');
-
+    console.log('\n🔍 Checking result...');
     var postJoinText = '';
-    try {
-        postJoinText = await page.evaluate(() => document.body.innerText);
-    } catch (e) { }
+    try { postJoinText = await page.evaluate(() => document.body.innerText); } catch (e) { }
 
     if (postJoinText.includes("can't join") || postJoinText.includes('لا يمكنك')) {
         console.log('❌ "You can\'t join this video call"');
-        console.log('   Reasons: meeting ended / host not present / account not allowed');
     } else if (postJoinText.includes('Leave') || postJoinText.includes('مغادرة') ||
         postJoinText.includes('people') || postJoinText.includes('أشخاص')) {
-        console.log('✅ SUCCESSFULLY JOINED THE MEETING!');
+        console.log('✅ JOINED SUCCESSFULLY!');
     } else if (postJoinText.includes('انضم الآن') || postJoinText.includes('Join now')) {
-        console.log('⚠️ Still on join page');
+        console.log('⚠️ Still on join page — one more try...');
+        try {
+            await page.evaluate(() => {
+                var btns = document.querySelectorAll('button');
+                for (var btn of btns) {
+                    var t = btn.textContent.trim();
+                    if (t.includes('انضم الآن') || t.includes('Join now')) { btn.click(); return; }
+                }
+            });
+            await sleep(8000);
+        } catch (e) { }
     } else {
-        console.log('⚠️ Unknown state. Preview: ' + postJoinText.substring(0, 200));
+        console.log('⚠️ Unknown state: ' + postJoinText.substring(0, 200));
     }
 
     // ─── Stay in Meeting ───
@@ -483,20 +434,16 @@ async function main() {
     while (Date.now() < endTime) {
         var minLeft = Math.round((endTime - Date.now()) / 60000);
         console.log('[' + new Date().toISOString() + '] ' + minLeft + ' min left');
-
         try { await page.screenshot({ path: path.join(reportsDir, 'screenshot_' + screenshotIndex + '.png') }); } catch (e) { }
         screenshotIndex++;
-
         try { await page.mouse.move(Math.floor(Math.random() * 800) + 100, Math.floor(Math.random() * 500) + 100); } catch (e) { }
-
         var waitMs = Math.min(endTime - Date.now(), 10 * 60 * 1000);
         if (waitMs <= 0) break;
         await sleep(waitMs);
     }
 
-    console.log('\n✅ Meeting time over.');
+    console.log('\n✅ Time over.');
 
-    // ─── Report ───
     fs.writeFileSync(path.join(reportsDir, 'report.txt'), [
         '📊 Attendance Report',
         'Link: ' + meetLink,
@@ -506,7 +453,6 @@ async function main() {
         'End: ' + new Date().toISOString(),
     ].join('\n'));
 
-    // ─── Save Cookies ───
     console.log('\n🍪 Saving cookies...');
     try {
         const client = await page.target().createCDPSession();
