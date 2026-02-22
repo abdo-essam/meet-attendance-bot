@@ -88,6 +88,11 @@ jobs:
           ls -la node_modules/puppeteer/.local-chromium/ 2>/dev/null || true
           find /home/runner -name "chrome" -type f 2>/dev/null | head -5 || true
 
+      - name: 🧹 Clean old cache
+        run: |
+          rm -rf bot/node_modules bot/package-lock.json
+          rm -rf ~/.cache/puppeteer
+
       - name: 📦 Install dependencies
         run: cd bot && npm install
 

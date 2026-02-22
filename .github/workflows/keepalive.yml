@@ -38,6 +38,11 @@ jobs:
           sudo apt-get install -y google-chrome-stable
 
           google-chrome-stable --version
+          
+      - name: 🧹 Clean old cache
+        run: |
+          rm -rf bot/node_modules bot/package-lock.json
+          rm -rf ~/.cache/puppeteer
 
       - name: 📦 Install dependencies
         run: cd bot && npm install
