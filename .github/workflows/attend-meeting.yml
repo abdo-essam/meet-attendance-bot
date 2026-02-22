@@ -2,19 +2,18 @@ name: 📊 Attend Meeting
 
 on:
   schedule:
-    # Sunday 9:00 AM Egypt = 7:00 UTC
-    - cron: '0 7 * * 0'
-    # Tuesday 9:00 AM Egypt
-    - cron: '0 7 * * 2'
-    # Thursday 9:00 AM Egypt
-    - cron: '0 7 * * 4'
+    # 8:00 PM Egypt Time = 18:00 UTC
+    # Runs on Sunday (0), Tuesday (2), and Thursday (4)
+    # Edit the '0,2,4' numbers below to change days (0=Sunday ... 6=Saturday)
+    # Edit the '18' to change the hour in UTC
+    - cron: '0 18 * * 0,2,4'
 
   workflow_dispatch:
     inputs:
       meet_link:
         description: 'Google Meet link'
         required: true
-        default: 'https://meet.google.com/wjf-fkuv-ivp'
+        default: 'https://meet.google.com/rip-oyzq-eze'
       meeting_name:
         description: 'Meeting name'
         required: true

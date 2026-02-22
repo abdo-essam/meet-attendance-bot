@@ -28,7 +28,7 @@ Most importantly, it features an **intelligent Cookie Auto-Refresh System**! The
 1. **Install Node.js** on your machine.
 2. Clone this repository and open your terminal.
 3. Run `node save-cookies.js`.
-4. Log in to your Google Account (e.g., your `@eui.edu.eg` account) in the Chrome window that opens.
+4. Log in to your Google Account (e.g., your `@gmail.com` account) in the Chrome window that opens.
 5. The script will automatically detect successful login and save your secure cookie string to a file named `cookies.base64.txt`.
 
 ### On GitHub Projects Settings
@@ -42,10 +42,16 @@ Most importantly, it features an **intelligent Cookie Auto-Refresh System**! The
 | `MEET_LINK` | The default Google Meet URL (e.g. `https://meet.google.com/wjf-fkuv-ivp`). |
 | `COOKIE_PASSWORD`| Make up a strong password (e.g., `MySecretKey2026!AttendanceBot`). This encrypts your cookies before they are saved to the repo! |
 
-### Configuration
+### Configuration & Scheduling Meetings
 1. Open `.github/workflows/attend-meeting.yml`
-2. Edit the **cron schedule** to match your classes. (Times are in UTC by default; 9:00 AM Egypt = 7:00 AM UTC).
-3. Push the changes.
+2. You can easily customize the exact days and time the bot joins your classes. 
+   - By default, it is set to **8:00 PM Egypt Time** (which is `18:00 UTC`). 
+   - It runs on **Sunday (0), Tuesday (2), and Thursday (4)** via this cron line: `- cron: '0 18 * * 0,2,4'`
+3. **To change the Schedule:** 
+   - Edit the `18` to change the UTC hour. 
+   - Edit the `0,2,4` to change the days of the week (`0` is Sunday, `6` is Saturday).
+   - *Tip: Use [crontab.guru](https://crontab.guru/) to help generate your schedule!*
+4. Push the changes to GitHub.
 
 ---
 
@@ -56,7 +62,7 @@ Your cookies refresh **EVERY DAY** so they almost never expire!
 
 **Day 1 (Monday):**
 - **3:00 AM** → 🔄 Keepalive runs → Loads cookies → Visits Google, Meet, Gmail → Saves fresh cookies ✅ → Commits to repo
-- **9:00 AM** → 📊 Bot joins meeting → Uses fresh cookies → Tracks attendance → Saves report + fresh cookies ✅ → Commits to repo
+- **8:00 PM** → *(If scheduled day)* 📊 Bot joins meeting → Uses fresh cookies → Tracks attendance → Saves report + fresh cookies ✅ → Commits to repo
 
 **Day 2 (Tuesday):**
 - **3:00 AM** → 🔄 Keepalive refreshes cookies ✅
