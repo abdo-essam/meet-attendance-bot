@@ -27,12 +27,20 @@ jobs:
       - name: 🌐 Install Chrome & dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y wget gnupg xvfb
+          sudo apt-get install -y wget gnupg xvfb dbus dbus-x11
+          
+          sudo mkdir -p /run/dbus
+          sudo dbus-daemon --system --fork || true
+          
           wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg
           echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
           sudo apt-get update
           sudo apt-get install -y google-chrome-stable
-
+          
+          sudo mkdir -p /sys/devices/system/cpu/cpu0/cpufreq
+          echo "2000000" | sudo tee /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq || true
+          echo "2000000" | sudo tee /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq || true
+          
           google-chrome-stable --version
 
       - name: 📦 Install dependencies
@@ -53,11 +61,14 @@ jobs:
         env:
           COOKIE_PASSWORD: ${{ secrets.COOKIE_PASSWORD }}
           GOOGLE_COOKIES: ${{ secrets.GOOGLE_COOKIES }}
-          DBUS_SESSION_BUS_ADDRESS: /dev/null
         run: |
           export DISPLAY=:99
-          sudo Xvfb :99 -screen 0 1280x720x24 &
-          sleep 2
+          Xvfb :99 -screen 0 1280x720x24 -ac +extension GLX +render -noreset &
+          sleep 3
+          
+          eval $(dbus-launch --sh-syntax)
+          export DBUS_SESSION_BUS_ADDRESS
+          
           cd bot && node refresh-cookies.js
 
       - name: 💾 Save refreshed cookies

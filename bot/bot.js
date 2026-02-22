@@ -69,7 +69,6 @@ async function main() {
     // ─── Launch Browser ───
     console.log('\n🚀 Launching browser...');
 
-    // Find Chrome executable
     var chromePath = null;
     var possiblePaths = [
         '/usr/bin/google-chrome-stable',
@@ -91,64 +90,110 @@ async function main() {
         console.log('🌐 No system Chrome found, using Puppeteer bundled Chrome');
     }
 
-    var launchOptions = {
-        headless: 'new',
-        args: [
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-dev-shm-usage',
-            '--disable-gpu',
-            '--no-zygote',
-            '--use-fake-ui-for-media-stream',
-            '--use-fake-device-for-media-stream',
-            '--disable-blink-features=AutomationControlled',
-            '--auto-accept-camera-and-microphone-capture',
-            '--disable-features=VizDisplayCompositor',
-            '--disable-background-networking',
-            '--disable-default-apps',
-            '--disable-extensions',
-            '--disable-sync',
-            '--disable-translate',
-            '--no-first-run',
-            '--disable-crashpad',
-            '--disable-breakpad',
-            '--disable-component-update',
-            '--disable-ipc-flooding-protection',
-            '--disable-renderer-backgrounding',
-            '--enable-features=NetworkService,NetworkServiceInProcess',
-            '--force-color-profile=srgb'
-        ],
-        defaultViewport: { width: 1280, height: 720 },
-        ignoreDefaultArgs: ['--enable-automation'],
-        protocolTimeout: 60000
-    };
+    var launchArgs = [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--no-zygote',
+        '--use-fake-ui-for-media-stream',
+        '--use-fake-device-for-media-stream',
+        '--disable-blink-features=AutomationControlled',
+        '--auto-accept-camera-and-microphone-capture',
+        '--disable-features=VizDisplayCompositor',
+        '--disable-background-networking',
+        '--disable-default-apps',
+        '--disable-extensions',
+        '--disable-sync',
+        '--disable-translate',
+        '--no-first-run',
+        '--disable-component-update',
+        '--disable-ipc-flooding-protection',
+        '--disable-renderer-backgrounding',
+        '--enable-features=NetworkService,NetworkServiceInProcess',
+        '--force-color-profile=srgb',
+        '--disable-field-trial-config',
+        '--disable-background-timer-throttling',
+        '--disable-backgrounding-occluded-windows',
+        '--disable-hang-monitor',
+        '--disable-prompt-on-repost',
+        '--metrics-recording-only',
+        '--no-default-browser-check',
+        '--autoplay-policy=no-user-gesture-required',
+        '--window-size=1280,720'
+    ];
 
+    // ─── Try multiple launch strategies ───
+    var browser;
+    var strategies = [];
+
+    // Strategy 1: System Chrome with headless='new'
     if (chromePath) {
-        launchOptions.executablePath = chromePath;
+        strategies.push({
+            name: 'System Chrome (headless=new)',
+            options: {
+                headless: 'new',
+                executablePath: chromePath,
+                args: launchArgs,
+                defaultViewport: { width: 1280, height: 720 },
+                ignoreDefaultArgs: ['--enable-automation'],
+                protocolTimeout: 60000
+            }
+        });
+
+        // Strategy 2: System Chrome with headless=true (old mode)
+        strategies.push({
+            name: 'System Chrome (headless=true)',
+            options: {
+                headless: true,
+                executablePath: chromePath,
+                args: launchArgs,
+                defaultViewport: { width: 1280, height: 720 },
+                ignoreDefaultArgs: ['--enable-automation', '--disable-extensions'],
+                protocolTimeout: 60000
+            }
+        });
+
+        // Strategy 3: System Chrome with --headless=old flag
+        strategies.push({
+            name: 'System Chrome (--headless=old in args)',
+            options: {
+                headless: false,
+                executablePath: chromePath,
+                args: [...launchArgs, '--headless=old'],
+                defaultViewport: { width: 1280, height: 720 },
+                ignoreDefaultArgs: ['--enable-automation'],
+                protocolTimeout: 60000
+            }
+        });
     }
 
-    // Try launching with retry
-    var browser;
-    for (var attempt = 1; attempt <= 3; attempt++) {
+    // Strategy 4: Puppeteer bundled Chrome
+    strategies.push({
+        name: 'Puppeteer bundled Chrome',
+        options: {
+            headless: 'new',
+            args: launchArgs,
+            defaultViewport: { width: 1280, height: 720 },
+            ignoreDefaultArgs: ['--enable-automation'],
+            protocolTimeout: 60000
+        }
+    });
+
+    for (var i = 0; i < strategies.length; i++) {
+        var strategy = strategies[i];
         try {
-            console.log('🚀 Launch attempt ' + attempt + '/3...');
-            browser = await puppeteer.launch(launchOptions);
-            console.log('✅ Browser launched successfully!');
+            console.log('🚀 Strategy ' + (i + 1) + '/' + strategies.length + ': ' + strategy.name + '...');
+            browser = await puppeteer.launch(strategy.options);
+            console.log('✅ Browser launched successfully with: ' + strategy.name);
             break;
         } catch (e) {
-            console.log('⚠️ Attempt ' + attempt + ' failed: ' + e.message);
-            if (attempt === 3) {
-                // Last resort: try without executablePath (use Puppeteer's bundled)
-                console.log('🔄 Trying with Puppeteer bundled Chrome...');
-                delete launchOptions.executablePath;
-                try {
-                    browser = await puppeteer.launch(launchOptions);
-                    console.log('✅ Browser launched with bundled Chrome!');
-                } catch (e2) {
-                    console.log('❌ All launch attempts failed!');
-                    console.log('Last error: ' + e2.message);
-                    process.exit(1);
-                }
+            console.log('⚠️ ' + strategy.name + ' failed: ' + e.message.split('\n')[0]);
+            if (i === strategies.length - 1) {
+                console.log('❌ ALL launch strategies failed!');
+                console.log('\nFull last error:');
+                console.log(e.message);
+                process.exit(1);
             }
             await sleep(2000);
         }
