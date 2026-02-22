@@ -86,10 +86,29 @@ async function main() {
     });
 
     try {
-        await page.setCookie(...cookies);
-        console.log('✅ Cookies loaded into browser');
+        const client = await page.target().createCDPSession();
+        const validCookies = cookies.map(c => {
+            let copy = { ...c };
+            delete copy.size;
+            delete copy.session;
+            return copy;
+        });
+        await client.send('Network.setCookies', { cookies: validCookies });
+        console.log('✅ Cookies loaded into browser via CDP');
     } catch (e) {
-        console.log('⚠️ Cookie set error: ' + e.message);
+        console.log('⚠️ Cookie set error: ', e.message);
+        try { await page.setCookie(...cookies); } catch (err) { }
+    }
+
+    console.log('\n🌐 Verifying Google Session directly...');
+    await page.goto('https://myaccount.google.com/', { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await sleep(4000);
+    const currUrl = page.url();
+    if (!currUrl.includes('myaccount')) {
+        console.log(`❌ Google didn't recognize cookies! Redirected to: ${currUrl}`);
+        console.log('⚠️ The cookies may have expired or Google is blocking this login.');
+    } else {
+        console.log('✅ Google session verified! Profile is active.');
     }
 
     // Go to Meet

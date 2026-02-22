@@ -88,9 +88,20 @@ async function refreshCookies() {
         'Accept-Language': 'en-US,en;q=0.9'
     });
 
-    // ─── Set cookies ───
-    await page.setCookie(...cookies);
-    console.log('✅ Cookies set');
+    try {
+        const client = await page.target().createCDPSession();
+        const validCookies = cookies.map(c => {
+            let copy = { ...c };
+            delete copy.size;
+            delete copy.session;
+            return copy;
+        });
+        await client.send('Network.setCookies', { cookies: validCookies });
+        console.log('✅ Cookies loaded into browser via CDP');
+    } catch (e) {
+        console.log('⚠️ Cookie set error: ', e.message);
+        try { await page.setCookie(...cookies); } catch (err) { }
+    }
 
     // ─── Visit Google to refresh session ───
     console.log('\n🌐 Visiting Google accounts...');
