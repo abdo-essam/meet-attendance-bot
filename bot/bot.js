@@ -95,11 +95,10 @@ async function main() {
     // Go to Meet
     console.log(`\n⏳ Navigating to ${meetLink}...`);
     try {
-        await page.goto(meetLink, { waitUntil: 'networkidle2', timeout: 60000 });
-        await sleep(10000); // let it load
+        await page.goto(meetLink, { waitUntil: 'domcontentloaded', timeout: 90000 });
 
-        // At this point, the automation should ideally perform logic to click 'Ask to join' or 'Join now'
-        // To keep implementation robust and general without knowing exact DOM of user's language:
+        console.log('Letting page settle for 15 seconds to handle redirects...');
+        await sleep(15000); // let it load fully and process redirects
         console.log('Attempting to join meeting...');
         // Mute audio and video via keyboard shortcuts (ctrl+d, ctrl+e)
         await page.keyboard.down('Control');
@@ -109,9 +108,25 @@ async function main() {
 
         await sleep(3000);
 
-        // Try entering meeting (pressing enter sometimes triggers join if focus is on join button)
-        await page.keyboard.press('Enter');
-        await sleep(5000);
+        let joinAttempt = 0;
+        let inMeeting = false;
+
+        // Try pressing Enter periodically to join (up to 3 times)
+        while (joinAttempt < 3 && !inMeeting) {
+            joinAttempt++;
+            console.log(`[Attempt ${joinAttempt}/3] Pressing 'Enter' to confirm join...`);
+
+            // Focus page and Press Enter
+            await page.bringToFront();
+            await page.keyboard.press('Enter');
+            await sleep(8000);
+
+            let currentUrl = page.url();
+            // Google Meet URLs often drop the landing page styling once inside
+            if (!currentUrl.includes('landing') && !currentUrl.includes('workspace')) {
+                inMeeting = true;
+            }
+        }
 
     } catch (e) {
         console.log('⚠️ Error navigating or joining meeting: ', e);
