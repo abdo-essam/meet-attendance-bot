@@ -1,0 +1,11 @@
+{
+  "name": "meet-attendance-root",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "puppeteer-core": "^22.0.0"
+  },
+  "scripts": {
+    "save-cookies": "node save-cookies.js"
+  }
+}

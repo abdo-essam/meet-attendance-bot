@@ -1,0 +1,12 @@
+{
+    "name": "meet-attendance-bot",
+    "version": "2.0.0",
+    "private": true,
+    "dependencies": {
+        "puppeteer-core": "^22.0.0"
+    },
+    "scripts": {
+        "start": "node bot.js",
+        "refresh": "node refresh-cookies.js"
+    }
+}

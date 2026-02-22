@@ -1,0 +1,72 @@
+name: 🔄 Cookie Keepalive
+
+on:
+  schedule:
+    # Run DAILY at 3:00 AM UTC (5:00 AM Egypt)
+    # This keeps cookies alive even on days without meetings
+    - cron: '0 3 * * *'
+
+  workflow_dispatch:
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 📦 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 📦 Install dependencies
+        run: cd bot && npm install
+
+      - name: 🌐 Install Chrome
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y chromium-browser fonts-liberation \
+            libasound2 libatk-bridge2.0-0 libatk1.0-0 libcups2 \
+            libdbus-1-3 libdrm2 libgbm1 libgtk-3-0 libnspr4 \
+            libnss3 libx11-xcb1 libxcomposite1 libxdamage1 \
+            libxrandr2 xdg-utils
+
+      - name: 🍪 Restore cookies
+        env:
+          GOOGLE_COOKIES: ${{ secrets.GOOGLE_COOKIES }}
+        run: |
+          cd bot
+          if [ -f ../cookies/session.enc ]; then
+            echo "Using encrypted cookies from repo"
+          elif [ -n "$GOOGLE_COOKIES" ]; then
+            echo "$GOOGLE_COOKIES" | base64 -d > cookies.json
+          fi
+
+      - name: 🔄 Refresh cookies
+        env:
+          COOKIE_PASSWORD: ${{ secrets.COOKIE_PASSWORD }}
+          GOOGLE_COOKIES: ${{ secrets.GOOGLE_COOKIES }}
+        run: cd bot && node refresh-cookies.js
+
+      - name: 💾 Save refreshed cookies
+        if: always()
+        run: |
+          git config user.name "Cookie Bot"
+          git config user.email "bot@attendance.local"
+          git add -f cookies/session.enc || true
+          git diff --staged --quiet || git commit -m "🍪 Cookie refresh $(date +'%Y-%m-%d')"
+          git push || true
+
+      - name: 🚨 Notify on failure
+        if: failure()
+        run: |
+          echo "❌ Cookie refresh FAILED!"
+          echo "Cookies may have expired."
+          echo "Run save-cookies.js on your PC and update GitHub Secret."
+          echo ""
+          echo "This happens rarely (every 2-3 months)"

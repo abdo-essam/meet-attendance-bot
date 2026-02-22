@@ -1,0 +1,187 @@
+var puppeteer = require('puppeteer-core');
+var fs = require('fs');
+var path = require('path');
+var cryptoHelper = require('./crypto-helper');
+
+var meetLink = process.env.MEET_LINK || 'https://meet.google.com/';
+var durationMinutes = parseInt(process.env.DURATION_MINUTES || '120');
+
+async function sleep(ms) {
+    return new Promise(r => setTimeout(r, ms));
+}
+
+async function main() {
+    console.log('═'.repeat(50));
+    console.log('🤖 Meet Attendance Bot');
+    console.log('═'.repeat(50));
+
+    // ─── Load Cookies (try multiple sources) ───
+    console.log('\n🍪 Loading Google session...');
+
+    var cookies = [];
+    var COOKIE_PASSWORD = process.env.COOKIE_PASSWORD || 'default-password';
+
+    // Source 1: Encrypted file in repo (freshest)
+    var encPath = path.join(__dirname, '..', 'cookies', 'session.enc');
+    if (cookies.length === 0 && fs.existsSync(encPath)) {
+        try {
+            var enc = fs.readFileSync(encPath, 'utf8');
+            cookies = JSON.parse(cryptoHelper.decrypt(enc, COOKIE_PASSWORD));
+            console.log('✅ Loaded from encrypted file (' + cookies.length + ')');
+        } catch (e) {
+            console.log('⚠️ Encrypted file failed: ' + e.message);
+        }
+    }
+
+    // Source 2: Raw cookies.json (from initial setup or refresh)
+    var rawPath = path.join(__dirname, 'cookies.json');
+    if (cookies.length === 0 && fs.existsSync(rawPath)) {
+        try {
+            cookies = JSON.parse(fs.readFileSync(rawPath, 'utf8'));
+            console.log('✅ Loaded from cookies.json (' + cookies.length + ')');
+        } catch (e) {
+            console.log('⚠️ cookies.json failed: ' + e.message);
+        }
+    }
+
+    // Source 3: GitHub Secret (base64)
+    if (cookies.length === 0 && process.env.GOOGLE_COOKIES) {
+        try {
+            var decoded = Buffer.from(process.env.GOOGLE_COOKIES, 'base64').toString('utf8');
+            cookies = JSON.parse(decoded);
+            console.log('✅ Loaded from GitHub Secret (' + cookies.length + ')');
+        } catch (e) {
+            console.log('⚠️ Secret failed: ' + e.message);
+        }
+    }
+
+    if (cookies.length === 0) {
+        console.log('❌ NO COOKIES! Run save-cookies.js on your PC first.');
+        process.exit(1);
+    }
+
+    var browser = await puppeteer.launch({
+        headless: true,
+        executablePath: '/usr/bin/chromium-browser',
+        args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-gpu',
+            '--single-process',
+            '--no-zygote',
+            '--use-fake-ui-for-media-stream'
+        ],
+        defaultViewport: { width: 1280, height: 720 }
+    });
+
+    var page = await browser.newPage();
+
+    try {
+        await page.setCookie(...cookies);
+        console.log('✅ Cookies loaded into browser');
+    } catch (e) {
+        console.log('⚠️ Cookie set error: ' + e.message);
+    }
+
+    // Go to Meet
+    console.log(`\n⏳ Navigating to ${meetLink}...`);
+    try {
+        await page.goto(meetLink, { waitUntil: 'networkidle2', timeout: 60000 });
+        await sleep(10000); // let it load
+
+        // At this point, the automation should ideally perform logic to click 'Ask to join' or 'Join now'
+        // To keep implementation robust and general without knowing exact DOM of user's language:
+        console.log('Attempting to join meeting...');
+        // Mute audio and video via keyboard shortcuts (ctrl+d, ctrl+e)
+        await page.keyboard.down('Control');
+        await page.keyboard.press('d');
+        await page.keyboard.press('e');
+        await page.keyboard.up('Control');
+
+        await sleep(3000);
+
+        // Try entering meeting (pressing enter sometimes triggers join if focus is on join button)
+        await page.keyboard.press('Enter');
+        await sleep(5000);
+
+    } catch (e) {
+        console.log('⚠️ Error navigating or joining meeting: ', e);
+    }
+
+    console.log(`\n🎥 In meeting... staying for ${durationMinutes} minutes.`);
+
+    var reportsDir = path.join(__dirname, 'reports');
+    if (!fs.existsSync(reportsDir)) {
+        fs.mkdirSync(reportsDir, { recursive: true });
+    }
+
+    let screenshotIndex = 1;
+    const loopTimeMinutes = 10;
+    var endTime = Date.now() + (durationMinutes * 60 * 1000);
+
+    while (Date.now() < endTime) {
+        console.log(`[${new Date().toISOString()}] Still in meeting...`);
+        try {
+            await page.screenshot({ path: path.join(reportsDir, `screenshot_${screenshotIndex}.png`) });
+        } catch (err) {
+            console.log('⚠️ Could not take screenshot: ' + err.message);
+        }
+        screenshotIndex++;
+
+        const timeLeft = endTime - Date.now();
+        const waitMs = Math.min(timeLeft, loopTimeMinutes * 60 * 1000);
+        if (waitMs <= 0) break;
+
+        await sleep(waitMs);
+    }
+
+    console.log('✅ Meeting time over. Generating final report.');
+    fs.writeFileSync(path.join(reportsDir, 'report.txt'), `Attended ${meetLink} for ${durationMinutes} minutes.\nDate: ${new Date().toISOString()}`);
+
+    // ═════════════════════════════════
+    //  SAVE REFRESHED COOKIES
+    // ═════════════════════════════════
+    console.log('\n🍪 Saving refreshed cookies...');
+
+    try {
+        var freshCookies = await page.cookies(
+            'https://accounts.google.com',
+            'https://meet.google.com',
+            'https://www.google.com'
+        );
+
+        // Save raw
+        fs.writeFileSync(
+            path.join(__dirname, 'cookies.json'),
+            JSON.stringify(freshCookies),
+            'utf8'
+        );
+
+        // Save encrypted
+        var encrypted = cryptoHelper.encrypt(
+            JSON.stringify(freshCookies),
+            COOKIE_PASSWORD
+        );
+
+        var cookiesDir = path.join(__dirname, '..', 'cookies');
+        if (!fs.existsSync(cookiesDir)) {
+            fs.mkdirSync(cookiesDir, { recursive: true });
+        }
+
+        fs.writeFileSync(
+            path.join(cookiesDir, 'session.enc'),
+            encrypted,
+            'utf8'
+        );
+
+        console.log('✅ Fresh cookies saved (' + freshCookies.length + ')');
+    } catch (e) {
+        console.log('⚠️ Cookie save error: ' + e.message);
+    }
+
+    await browser.close();
+    console.log('\n✅ Done!');
+}
+
+main().catch(console.error);

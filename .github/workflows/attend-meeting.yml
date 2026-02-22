@@ -1,0 +1,100 @@
+name: 📊 Attend Meeting
+
+on:
+  schedule:
+    # Sunday 9:00 AM Egypt = 7:00 UTC
+    - cron: '0 7 * * 0'
+    # Tuesday 9:00 AM Egypt
+    - cron: '0 7 * * 2'
+    # Thursday 9:00 AM Egypt
+    - cron: '0 7 * * 4'
+
+  workflow_dispatch:
+    inputs:
+      meet_link:
+        description: 'Google Meet link'
+        required: true
+        default: 'https://meet.google.com/wjf-fkuv-ivp'
+      meeting_name:
+        description: 'Meeting name'
+        required: true
+        default: 'My Class'
+      duration_minutes:
+        description: 'Duration in minutes (max 350)'
+        required: true
+        default: '120'
+
+jobs:
+  attend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 📦 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 📦 Install dependencies
+        run: cd bot && npm install
+
+      - name: 🌐 Install Chrome
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y chromium-browser fonts-liberation \
+            libasound2 libatk-bridge2.0-0 libatk1.0-0 libcups2 \
+            libdbus-1-3 libdrm2 libgbm1 libgtk-3-0 libnspr4 \
+            libnss3 libx11-xcb1 libxcomposite1 libxdamage1 \
+            libxrandr2 xdg-utils
+
+      - name: 🍪 Restore cookies
+        env:
+          GOOGLE_COOKIES: ${{ secrets.GOOGLE_COOKIES }}
+          COOKIE_PASSWORD: ${{ secrets.COOKIE_PASSWORD }}
+        run: |
+          cd bot
+          if [ -f ../cookies/session.enc ]; then
+            echo "Using encrypted cookies from repo"
+          elif [ -n "$GOOGLE_COOKIES" ]; then
+            echo "$GOOGLE_COOKIES" | base64 -d > cookies.json
+            echo "Using cookies from GitHub Secret"
+          fi
+
+      - name: 🤖 Run bot
+        env:
+          MEET_LINK: ${{ github.event.inputs.meet_link || secrets.MEET_LINK }}
+          MEETING_NAME: ${{ github.event.inputs.meeting_name || 'Scheduled Class' }}
+          DURATION_MINUTES: ${{ github.event.inputs.duration_minutes || '120' }}
+          COOKIE_PASSWORD: ${{ secrets.COOKIE_PASSWORD }}
+          GOOGLE_COOKIES: ${{ secrets.GOOGLE_COOKIES }}
+        run: cd bot && node bot.js
+        timeout-minutes: 360
+
+      - name: 💾 Save refreshed cookies & reports
+        if: always()
+        run: |
+          git config user.name "Attendance Bot"
+          git config user.email "bot@attendance.local"
+          
+          # Add cookies (encrypted only!)
+          git add -f cookies/session.enc || true
+          
+          # Add reports
+          git add -f bot/reports/ || true
+          
+          # Commit & push
+          git diff --staged --quiet || git commit -m "📊 Report + 🍪 Cookie refresh $(date +'%Y-%m-%d %H:%M')"
+          git push || true
+
+      - name: 📊 Upload report artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: attendance-${{ github.run_number }}
+          path: bot/reports/
+          retention-days: 90
