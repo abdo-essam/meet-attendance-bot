@@ -2,10 +2,6 @@ name: 📊 Attend Meeting
 
 on:
   schedule:
-    # 8:00 PM Egypt Time = 18:00 UTC
-    # Runs on Sunday (0), Tuesday (2), and Thursday (4)
-    # Edit the '0,2,4' numbers below to change days (0=Sunday ... 6=Saturday)
-    # Edit the '18' to change the hour in UTC
     - cron: '0 18 * * 0,2,4'
 
   workflow_dispatch:
@@ -44,14 +40,30 @@ jobs:
       - name: 📦 Install dependencies
         run: cd bot && npm install
 
-      - name: 🌐 Install Chrome
+      - name: 🌐 Install Chrome dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y chromium-browser fonts-liberation \
-            libasound2t64 libatk-bridge2.0-0 libatk1.0-0 libcups2 \
-            libdbus-1-3 libdrm2 libgbm1 libgtk-3-0 libnspr4 \
-            libnss3 libx11-xcb1 libxcomposite1 libxdamage1 \
-            libxrandr2 xdg-utils
+          sudo apt-get install -y \
+            fonts-liberation \
+            libasound2t64 \
+            libatk-bridge2.0-0 \
+            libatk1.0-0 \
+            libcups2 \
+            libdbus-1-3 \
+            libdrm2 \
+            libgbm1 \
+            libgtk-3-0 \
+            libnspr4 \
+            libnss3 \
+            libx11-xcb1 \
+            libxcomposite1 \
+            libxdamage1 \
+            libxrandr2 \
+            xdg-utils \
+            libxshmfence1 \
+            libxkbcommon0 \
+            libpango-1.0-0 \
+            libcairo2
 
       - name: 🍪 Restore cookies
         env:
@@ -81,14 +93,8 @@ jobs:
         run: |
           git config user.name "Attendance Bot"
           git config user.email "bot@attendance.local"
-          
-          # Add cookies (encrypted only!)
           git add -f cookies/session.enc || true
-          
-          # Add reports
           git add -f bot/reports/ || true
-          
-          # Commit & push
           git diff --staged --quiet || git commit -m "📊 Report + 🍪 Cookie refresh $(date +'%Y-%m-%d %H:%M')"
           git push || true
 
