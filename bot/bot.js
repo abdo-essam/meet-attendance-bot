@@ -69,22 +69,57 @@ async function main() {
     // ─── Launch Browser ───
     console.log('\n🚀 Launching browser...');
 
-    var browser = await puppeteer.launch({
+    // Find Chrome executable
+    var chromePath = null;
+    var possiblePaths = [
+        '/usr/bin/google-chrome-stable',
+        '/usr/bin/google-chrome',
+        '/usr/bin/chromium-browser',
+        '/usr/bin/chromium',
+    ];
+
+    var fs2 = require('fs');
+    for (var p of possiblePaths) {
+        if (fs2.existsSync(p)) {
+            chromePath = p;
+            break;
+        }
+    }
+
+    if (chromePath) {
+        console.log('🌐 Using Chrome at: ' + chromePath);
+    } else {
+        console.log('🌐 No system Chrome found, using Puppeteer bundled Chrome');
+    }
+
+    var launchOptions = {
         headless: 'new',
         args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',
             '--disable-dev-shm-usage',
             '--disable-gpu',
-            '--single-process',
             '--no-zygote',
             '--use-fake-ui-for-media-stream',
             '--use-fake-device-for-media-stream',
             '--disable-blink-features=AutomationControlled',
-            '--auto-accept-camera-and-microphone-capture'
+            '--auto-accept-camera-and-microphone-capture',
+            '--disable-features=VizDisplayCompositor',
+            '--disable-background-networking',
+            '--disable-default-apps',
+            '--disable-extensions',
+            '--disable-sync',
+            '--disable-translate',
+            '--no-first-run'
         ],
         defaultViewport: { width: 1280, height: 720 }
-    });
+    };
+
+    if (chromePath) {
+        launchOptions.executablePath = chromePath;
+    }
+
+    var browser = await puppeteer.launch(launchOptions);
 
     var page = await browser.newPage();
 

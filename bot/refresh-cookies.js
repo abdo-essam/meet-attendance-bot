@@ -75,19 +75,53 @@ async function refreshCookies() {
     // ─── Launch Browser ───
     console.log('\n🚀 Launching browser...');
 
-    var browser = await puppeteer.launch({
+    // Find Chrome executable
+    var chromePath = null;
+    var possiblePaths = [
+        '/usr/bin/google-chrome-stable',
+        '/usr/bin/google-chrome',
+        '/usr/bin/chromium-browser',
+        '/usr/bin/chromium',
+    ];
+
+    for (var p of possiblePaths) {
+        if (fs.existsSync(p)) {
+            chromePath = p;
+            break;
+        }
+    }
+
+    if (chromePath) {
+        console.log('🌐 Using Chrome at: ' + chromePath);
+    } else {
+        console.log('🌐 No system Chrome found, using Puppeteer bundled Chrome');
+    }
+
+    var launchOptions = {
         headless: 'new',
         args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',
             '--disable-dev-shm-usage',
             '--disable-gpu',
-            '--single-process',
             '--no-zygote',
-            '--disable-blink-features=AutomationControlled'
+            '--disable-blink-features=AutomationControlled',
+            '--disable-features=VizDisplayCompositor',
+            '--disable-background-networking',
+            '--disable-default-apps',
+            '--disable-extensions',
+            '--disable-sync',
+            '--disable-translate',
+            '--no-first-run'
         ],
         defaultViewport: { width: 1280, height: 720 }
-    });
+    };
+
+    if (chromePath) {
+        launchOptions.executablePath = chromePath;
+    }
+
+    var browser = await puppeteer.launch(launchOptions);
 
     var page = await browser.newPage();
 
