@@ -40,7 +40,7 @@ async function createStealthPage(browser) {
 
 /**
  * Verify the Google session is still active.
- * IMPROVED: Actually checks page content, not just URL.
+ * Checks both URL and page content thoroughly.
  */
 async function verifySession(page) {
     console.log('\n🌐 Verifying session...');
@@ -66,43 +66,45 @@ async function verifySession(page) {
         return false;
     }
 
-    // IMPROVED: Check page content for sign-out indicators
+    // Check page content
     try {
         const pageText = await page.evaluate(() => document.body ? document.body.innerText : '');
 
+        // Handle "Choose an account" page
         if (pageText.includes('Choose an account') || pageText.includes('اختيار حساب')) {
-            console.log('⚠️ "Choose an account" page detected — session may be partial');
-            console.log('🔄 Attempting to select account...');
+            // Check if any account says "Signed out"
+            if (pageText.includes('Signed out') || pageText.includes('تم تسجيل الخروج')) {
+                console.log('❌ Session expired! All accounts are signed out.');
+                return false;
+            }
 
-            // Try to click the account
+            console.log('⚠️ "Choose an account" page — trying to select...');
             const clicked = await page.evaluate(() => {
+                // Look for accounts that are NOT signed out
                 const items = document.querySelectorAll('[data-identifier], [data-email]');
+                for (const item of items) {
+                    const text = item.textContent || '';
+                    if (!text.includes('Signed out') && !text.includes('تم تسجيل الخروج')) {
+                        item.click();
+                        return true;
+                    }
+                }
+                // If all are signed out, click first anyway to see what happens
                 if (items.length > 0) {
                     items[0].click();
                     return true;
-                }
-                const listItems = document.querySelectorAll('li');
-                for (const li of listItems) {
-                    const t = li.textContent || '';
-                    if (t.includes('@') && !t.includes('Use another') && !t.includes('Remove')) {
-                        li.click();
-                        return true;
-                    }
                 }
                 return false;
             });
 
             if (clicked) {
-                console.log('✅ Account selected, waiting...');
                 await sleep(8000);
-
                 const newUrl = page.url();
                 const newText = await page.evaluate(() => document.body ? document.body.innerText : '');
 
-                // Check if we ended up on sign-in
                 if (newUrl.includes('ServiceLogin') || newUrl.includes('signin') ||
-                    newText.includes('Signed out') || newText.includes('Enter your password')) {
-                    console.log('❌ Session expired! Account is signed out.');
+                    newText.includes('Enter your password') || newText.includes('أدخل كلمة المرور')) {
+                    console.log('❌ Session expired! Redirected to password entry.');
                     return false;
                 }
 
@@ -112,17 +114,22 @@ async function verifySession(page) {
                 }
             }
 
-            // If the account shows "Signed out", session is dead
-            if (pageText.includes('Signed out') || pageText.includes('تسجيل الخروج')) {
-                console.log('❌ Session expired! Account shows "Signed out".');
-                return false;
-            }
+            console.log('❌ Could not verify session through account chooser');
+            return false;
         }
 
-        // Check if we're actually on the account page with content
+        // Check for actual account content
+        if (pageText.includes('Security') || pageText.includes('الأمان') ||
+            pageText.includes('Personal info') || pageText.includes('المعلومات الشخصية') ||
+            pageText.includes('Data & privacy') || pageText.includes('البيانات والخصوصية')) {
+            console.log('✅ Session OK! (account page content verified)');
+            return true;
+        }
+
+        // Generic sign-in check
         if (pageText.includes('Sign in') && !pageText.includes('Sign out') &&
             !pageText.includes('Security') && !pageText.includes('Personal info')) {
-            console.log('❌ Session expired! Page shows Sign in prompt.');
+            console.log('❌ Session expired! Page shows sign-in prompt.');
             return false;
         }
 
