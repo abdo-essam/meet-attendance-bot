@@ -5,7 +5,7 @@
 const { launchBrowser } = require('./browser-helper');
 
 async function test() {
-    const browser = await launchBrowser({ minimal: true });
+    const browser = await launchBrowser();
     console.log('✅ Browser launched!');
 
     const page = await browser.newPage();

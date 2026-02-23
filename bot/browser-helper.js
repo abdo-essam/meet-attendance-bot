@@ -10,11 +10,11 @@ function sleep(ms) {
 }
 
 /**
- * Launch Chrome with stealth patches applied.
+ * Launch Chrome with proven CI-compatible settings.
  */
-async function launchBrowser({ minimal = false } = {}) {
+async function launchBrowser() {
     console.log(`\n🚀 Launching Chrome${CHROME_PATH ? ` at: ${CHROME_PATH}` : ' (puppeteer bundled)'}`);
-    const options = getBrowserLaunchOptions({ minimal });
+    const options = getBrowserLaunchOptions();
     const browser = await puppeteer.launch(options);
     console.log('✅ Browser launched!');
     return browser;

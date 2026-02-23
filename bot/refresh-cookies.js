@@ -27,7 +27,7 @@ async function refreshCookies() {
     }
 
     // ─── Launch browser ─────────────────────────
-    const browser = await launchBrowser({ minimal: true });
+    const browser = await launchBrowser();
     const page = await createStealthPage(browser);
 
     // ─── Inject cookies ─────────────────────────

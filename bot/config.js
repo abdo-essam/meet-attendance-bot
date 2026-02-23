@@ -41,25 +41,17 @@ const CHROME_ARGS_MINIMAL = [
     '--window-size=1280,720',
 ];
 
-function getBrowserLaunchOptions({ minimal = false } = {}) {
-    const args = [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-    ];
-
-    if (!minimal) {
-        args.push(
-            '--use-fake-ui-for-media-stream',
-            '--use-fake-device-for-media-stream',
-            '--auto-accept-camera-and-microphone-capture',
-            '--disable-blink-features=AutomationControlled',
-        );
-    }
-
+function getBrowserLaunchOptions() {
+    // ONLY the 3 args proven to work in CI (identical to verify step)
     const options = {
         headless: true,
-        args,
+        args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--use-fake-ui-for-media-stream',
+            '--use-fake-device-for-media-stream',
+        ],
         defaultViewport: { width: 1280, height: 720 },
         protocolTimeout: 120000,
     };
