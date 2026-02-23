@@ -42,10 +42,24 @@ const CHROME_ARGS_MINIMAL = [
 ];
 
 function getBrowserLaunchOptions({ minimal = false } = {}) {
+    const args = [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+    ];
+
+    if (!minimal) {
+        args.push(
+            '--use-fake-ui-for-media-stream',
+            '--use-fake-device-for-media-stream',
+            '--auto-accept-camera-and-microphone-capture',
+            '--disable-blink-features=AutomationControlled',
+        );
+    }
+
     const options = {
         headless: true,
-        pipe: true,
-        args: minimal ? CHROME_ARGS_MINIMAL : CHROME_ARGS,
+        args,
         defaultViewport: { width: 1280, height: 720 },
         protocolTimeout: 120000,
     };

@@ -49,6 +49,26 @@ jobs:
       - name: 📦 Install dependencies
         run: cd bot && npm install
 
+      - name: 🔍 Verify Chrome
+        run: |
+          cd bot
+          CHROME_PATH=$(node -e "console.log(require('puppeteer').executablePath())")
+          echo "Chrome path: $CHROME_PATH"
+          ls -la "$CHROME_PATH" || echo "Chrome binary not found!"
+          "$CHROME_PATH" --version || echo "Chrome --version failed"
+          # Quick launch test
+          xvfb-run --auto-servernum node -e "
+            const puppeteer = require('puppeteer');
+            (async () => {
+              const browser = await puppeteer.launch({
+                headless: true,
+                args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+              });
+              console.log('✅ Chrome launched OK, version:', await browser.version());
+              await browser.close();
+            })().catch(e => { console.error('❌', e.message); process.exit(1); });
+          "
+
       - name: 🍪 Restore cookies
         env:
           GOOGLE_COOKIES: ${{ secrets.GOOGLE_COOKIES }}
