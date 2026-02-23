@@ -117,44 +117,52 @@ async function takeScreenshot(page, filename) {
 }
 
 async function waitForJoinPage(page) {
+    const btnLocators = [
+        'span:contains("Join now")', 'span:contains("Ask to join")',
+        'span:contains("انضمام")', 'span:contains("طلب انضمام")'
+    ];
+
     for (let attempt = 0; attempt < 30; attempt++) {
         await sleep(2000);
+        const url = page.url();
 
-        let text = '';
         try {
-            text = await page.evaluate(() => document.body ? document.body.innerText : '');
-        } catch (_) {
-            continue;
-        }
+            // First check if a recognizable join button exists
+            for (const textMatch of ['Join now', 'Ask to join', 'انضمام', 'طلب انضمام', 'Join']) {
+                const elements = await page.$x(`//span[contains(text(), '${textMatch}')]`);
+                if (elements.length > 0) {
+                    console.log(`✅ Join page ready! [${attempt + 1}] Found text: "${textMatch}"`);
+                    return true;
+                }
+            }
 
-        // Check for join button text
-        if (JOIN_TEXTS.some((t) => text.includes(t))) {
-            console.log(`✅ Join page ready! [${attempt + 1}]`);
-            return true;
-        }
+            // If no join button, dump what we DO see on the page
+            const text = await page.evaluate(() => document.body ? document.body.innerText.replace(/\n/g, ' ').substring(0, 200) : '');
 
-        // Check for rejection
-        if (text.includes("can't join") || text.includes('لا يمكنك')) {
-            console.log(`❌ Meeting unavailable [${attempt + 1}]`);
-            return false;
+            if (text.toLowerCase().includes('return to home screen') && text.toLowerCase().includes('unavailable')) {
+                console.log(`❌ Meeting unavailable [${attempt + 1}] URL: ${url}`);
+                console.log(`🔍 [DEBUG] Page text: ${text}`);
+                await takeScreenshot(page, 'debug_unavailable.png');
+                return false;
+            }
+
+            if (attempt % 5 === 0) {
+                console.log(`⏳ Waiting... URL: ${url} | Text: ${text.substring(0, 50)}...`);
+            }
+        } catch (err) {
+            console.log(`⚠️ Wait error: ${err.message}`);
         }
 
         // Retry navigation if stuck on homepage
-        const url = page.url();
-        if (
-            (url === 'https://meet.google.com/' || url === 'https://meet.google.com') &&
-            (attempt === 3 || attempt === 10)
-        ) {
-            console.log('⚠️ On homepage, retrying navigation...');
+        if ((url === 'https://meet.google.com/' || url === 'https://meet.google.com') && (attempt === 3 || attempt === 10)) {
+            console.log('⚠️ On homepage, retrying navigation to absolute link...');
             try {
                 await page.goto(MEET_LINK, { waitUntil: 'networkidle2', timeout: 30000 });
-            } catch (_) { /* non-fatal */ }
-        }
-
-        if (attempt % 5 === 0) {
-            console.log(`⏳ [${attempt + 1}/30] ${url.substring(0, 60)}`);
+            } catch (_) { }
         }
     }
+
+    await takeScreenshot(page, 'debug_timeout.png');
     return false;
 }
 
