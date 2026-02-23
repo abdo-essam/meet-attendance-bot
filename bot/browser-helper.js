@@ -2,7 +2,7 @@
 //  Browser launch, stealth, and session helpers
 // ============================================
 
-const puppeteer = require('puppeteer-core');
+const puppeteer = require('puppeteer');
 const { getBrowserLaunchOptions, USER_AGENT, CHROME_PATH } = require('./config');
 
 function sleep(ms) {
@@ -13,7 +13,7 @@ function sleep(ms) {
  * Launch Chrome with stealth patches applied.
  */
 async function launchBrowser({ minimal = false } = {}) {
-    console.log(`\n🚀 Launching Chrome at: ${CHROME_PATH}`);
+    console.log(`\n🚀 Launching Chrome${CHROME_PATH ? ` at: ${CHROME_PATH}` : ' (puppeteer bundled)'}`);
     const options = getBrowserLaunchOptions({ minimal });
     const browser = await puppeteer.launch(options);
     console.log('✅ Browser launched!');

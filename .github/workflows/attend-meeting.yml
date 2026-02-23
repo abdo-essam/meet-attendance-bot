@@ -36,7 +36,7 @@ jobs:
         with:
           node-version: '20'
 
-      - name: 🌐 Install Chrome & Dependencies
+      - name: 🌐 Install system dependencies
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq xvfb dbus dbus-x11 \
@@ -45,15 +45,6 @@ jobs:
             libgtk-3-0 libnspr4 libnss3 libx11-xcb1 libxcomposite1 \
             libxdamage1 libxrandr2 xdg-utils libxshmfence1 \
             libxkbcommon0 libpango-1.0-0 libcairo2 || true
-
-          # Download Chrome for Testing 131 (matches User-Agent)
-          wget -q https://storage.googleapis.com/chrome-for-testing-public/131.0.6778.85/linux64/chrome-linux64.zip
-          unzip -q chrome-linux64.zip
-          sudo mv chrome-linux64 /opt/chrome
-          sudo chmod +x /opt/chrome/chrome
-
-          echo "Chrome installed at /opt/chrome/chrome"
-          /opt/chrome/chrome --version || true
 
       - name: 📦 Install dependencies
         run: cd bot && npm install
@@ -78,7 +69,6 @@ jobs:
           DURATION_MINUTES: ${{ github.event.inputs.duration_minutes || '120' }}
           COOKIE_PASSWORD: ${{ secrets.COOKIE_PASSWORD }}
           GOOGLE_COOKIES: ${{ secrets.GOOGLE_COOKIES }}
-          CHROME_PATH: /opt/chrome/chrome
         run: |
           eval $(dbus-launch --sh-syntax)
           cd bot && xvfb-run --auto-servernum --server-args="-screen 0 1280x720x24 -ac" node bot.js

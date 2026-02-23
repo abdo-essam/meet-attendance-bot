@@ -4,7 +4,8 @@
 
 const path = require('path');
 
-const CHROME_PATH = process.env.CHROME_PATH || '/usr/bin/google-chrome-stable';
+// CHROME_PATH is optional — if not set, puppeteer uses its bundled Chrome
+const CHROME_PATH = process.env.CHROME_PATH || '';
 const COOKIE_PASSWORD = process.env.COOKIE_PASSWORD || 'default-password';
 const MEET_LINK = process.env.MEET_LINK || 'https://meet.google.com/';
 const DURATION_MINUTES = parseInt(process.env.DURATION_MINUTES || '120', 10);
@@ -24,6 +25,7 @@ const CHROME_ARGS = [
     '--disable-setuid-sandbox',
     '--disable-dev-shm-usage',
     '--disable-gpu',
+    '--no-zygote',
     '--use-fake-ui-for-media-stream',
     '--use-fake-device-for-media-stream',
     '--auto-accept-camera-and-microphone-capture',
@@ -41,6 +43,7 @@ const CHROME_ARGS_MINIMAL = [
     '--disable-setuid-sandbox',
     '--disable-dev-shm-usage',
     '--disable-gpu',
+    '--no-zygote',
     '--disable-blink-features=AutomationControlled',
     '--window-size=1280,720',
     '--disable-features=Crashpad,OptimizationGuideModelDownloading',
@@ -51,9 +54,8 @@ const CHROME_ARGS_MINIMAL = [
 ];
 
 function getBrowserLaunchOptions({ minimal = false } = {}) {
-    return {
-        headless: 'new',
-        executablePath: CHROME_PATH,
+    const options = {
+        headless: true,
         args: minimal ? CHROME_ARGS_MINIMAL : CHROME_ARGS,
         defaultViewport: { width: 1280, height: 720 },
         protocolTimeout: 120000,
@@ -68,6 +70,13 @@ function getBrowserLaunchOptions({ minimal = false } = {}) {
             CHROME_LOG_FILE: '/dev/null',
         },
     };
+
+    // Only set executablePath if explicitly provided
+    if (CHROME_PATH) {
+        options.executablePath = CHROME_PATH;
+    }
+
+    return options;
 }
 
 module.exports = {
