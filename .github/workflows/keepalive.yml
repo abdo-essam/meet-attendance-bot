@@ -51,6 +51,8 @@ jobs:
         env:
           COOKIE_PASSWORD: ${{ secrets.COOKIE_PASSWORD }}
           GOOGLE_COOKIES: ${{ secrets.GOOGLE_COOKIES }}
+          GOOGLE_EMAIL: ${{ secrets.GOOGLE_EMAIL }}
+          GOOGLE_PASSWORD: ${{ secrets.GOOGLE_PASSWORD }}
         run: |
           cd bot && xvfb-run --auto-servernum --server-args="-screen 0 1280x720x24 -ac" node refresh-cookies.js
 

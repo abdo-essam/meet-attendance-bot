@@ -6,5 +6,9 @@
     "start": "cd bot && node bot.js",
     "refresh": "cd bot && node refresh-cookies.js",
     "save-cookies": "cd bot && node save-cookies.js"
+  },
+  "dependencies": {
+    "dotenv": "^17.3.1",
+    "puppeteer": "^24.37.5"
   }
 }

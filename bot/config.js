@@ -1,4 +1,5 @@
 const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 
 // CHROME_PATH is optional — if not set, puppeteer uses its bundled Chrome
 const CHROME_PATH = process.env.CHROME_PATH || '';
@@ -40,7 +41,7 @@ const CHROME_ARGS_MINIMAL = [
 function getBrowserLaunchOptions() {
     // ONLY the 3 args proven to work in CI (identical to verify step)
     const options = {
-        headless: true,
+        headless: process.env.HEADLESS !== 'false',
         args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',

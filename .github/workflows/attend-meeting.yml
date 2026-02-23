@@ -93,6 +93,8 @@ jobs:
           DURATION_MINUTES: ${{ github.event.inputs.duration_minutes || '120' }}
           COOKIE_PASSWORD: ${{ secrets.COOKIE_PASSWORD }}
           GOOGLE_COOKIES: ${{ secrets.GOOGLE_COOKIES }}
+          GOOGLE_EMAIL: ${{ secrets.GOOGLE_EMAIL }}
+          GOOGLE_PASSWORD: ${{ secrets.GOOGLE_PASSWORD }}
         run: |
           cd bot && xvfb-run --auto-servernum --server-args="-screen 0 1280x720x24 -ac" node bot.js
         timeout-minutes: 360

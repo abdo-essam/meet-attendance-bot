@@ -60,9 +60,10 @@ async function verifySession(page) {
     if (
         url.includes('ServiceLogin') ||
         url.includes('signin/identifier') ||
-        url.includes('signin/v2')
+        url.includes('signin/v2') ||
+        url.includes('/account/about')
     ) {
-        console.log('❌ Session expired! (URL indicates sign-in page)');
+        console.log('❌ Session expired! (URL indicates sign-in page or about page)');
         return false;
     }
 

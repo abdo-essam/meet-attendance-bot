@@ -20,20 +20,17 @@ async function main() {
     // ─── Load cookies ───────────────────────────
     const cookies = loadCookies();
     if (cookies.length === 0) {
-        console.log('❌ No cookies found! Run save-cookies first.');
-        process.exit(1);
-    }
+        console.log('⚠️ No cookies found! The bot will attempt auto-login from scratch.');
+    } else {
+        // ─── Check critical cookies exist ───────────
+        const hasSID = cookies.some(c => c.name === 'SID' || c.name === '__Secure-1PSID' || c.name === '__Secure-3PSID');
+        const hasMeetCookies = cookies.some(c => (c.domain || '').includes('meet.google.com'));
+        const hasOSID = cookies.some(c => c.name === 'OSID' || c.name === '__Secure-OSID');
+        console.log(`🔍 Cookie check: SID=${hasSID ? '✅' : '❌'} Meet=${hasMeetCookies ? '✅' : '⚠️'} OSID=${hasOSID ? '✅' : '⚠️'}`);
 
-    // ─── Check critical cookies exist ───────────
-    const hasSID = cookies.some(c => c.name === 'SID' || c.name === '__Secure-1PSID' || c.name === '__Secure-3PSID');
-    const hasMeetCookies = cookies.some(c => (c.domain || '').includes('meet.google.com'));
-    const hasOSID = cookies.some(c => c.name === 'OSID' || c.name === '__Secure-OSID');
-    console.log(`🔍 Cookie check: SID=${hasSID ? '✅' : '❌'} Meet=${hasMeetCookies ? '✅' : '⚠️'} OSID=${hasOSID ? '✅' : '⚠️'}`);
-
-    if (!hasSID) {
-        console.log('❌ No SID cookies! Session definitely won\'t work.');
-        console.log('   Re-run: node test-local.js (or save-cookies.js)');
-        process.exit(1);
+        if (!hasSID) {
+            console.log('⚠️ No SID cookies! The bot will try to log in automatically.');
+        }
     }
 
     // ─── Launch browser ─────────────────────────
@@ -50,10 +47,15 @@ async function main() {
     // ─── Verify Google session ──────────────────
     const sessionOk = await verifySession(page);
     if (!sessionOk) {
-        await takeScreenshot(page, 'debug_session.png');
-        console.log('❌ Google session verification failed! Exiting.');
-        await browser.close();
-        process.exit(1);
+        console.log('⚠️ Google session verification failed! Attempting automatic login...');
+        const loginSuccess = await autoLoginFlow(page);
+        if (!loginSuccess) {
+            console.log('❌ Auto-login failed during session verification.');
+            await takeScreenshot(page, 'debug_signin_failed.png');
+            await browser.close();
+            process.exit(1);
+        }
+        console.log('✅ Auto-login succeeded.');
     }
 
     // ─── Go DIRECTLY to the meeting link ────────
@@ -75,11 +77,22 @@ async function main() {
     console.log(`📄 Page text: "${landingText.substring(0, 150).replace(/\n/g, ' ')}..."`);
 
     // Check if redirected to sign-in
-    if (landingUrl.includes('ServiceLogin') || landingUrl.includes('signin/identifier') || landingUrl.includes('signin/v2')) {
-        console.log('❌ Redirected to sign-in! Session expired.');
-        await takeScreenshot(page, 'debug_signin_redirect.png');
-        await browser.close();
-        process.exit(1);
+    if (landingUrl.includes('ServiceLogin') || landingUrl.includes('signin/identifier') || landingUrl.includes('signin/v2') || landingUrl.includes('accounts.google.com')) {
+        console.log('⚠️ Redirected to sign-in! Attempting automatic login...');
+        const loginSuccess = await autoLoginFlow(page);
+        if (!loginSuccess) {
+            console.log('❌ Auto-login failed.');
+            await takeScreenshot(page, 'debug_signin_failed.png');
+            await browser.close();
+            process.exit(1);
+        }
+
+        console.log('✅ Auto-login succeeded. Proceeding to meeting link...');
+        // Go to meeting link again
+        try {
+            await page.goto(MEET_LINK, { waitUntil: 'networkidle2', timeout: 60000 });
+            await sleep(3000);
+        } catch (_) { }
     }
 
     // Check for workspace/marketing page redirect
@@ -104,7 +117,7 @@ async function main() {
                 await browser.close();
                 process.exit(1);
             }
-        } catch (_) {}
+        } catch (_) { }
     }
 
     // ─── Handle "Choose an account" page ────────
@@ -141,6 +154,9 @@ async function main() {
         const stateText = await getPageText(page);
         console.log(`   State: "${stateText.substring(0, 200).replace(/\n/g, ' ')}"`);
     }
+
+    // ─── Fill Guest Name if prompted ────────────
+    await fillGuestName(page);
 
     // ─── Dismiss popups ─────────────────────────
     console.log('\n🔕 Dismissing popups...');
@@ -328,7 +344,7 @@ async function waitForJoinPage(page) {
             // Retry if stuck on meet homepage
             if ((url === 'https://meet.google.com/' || url === 'https://meet.google.com') && (attempt === 3 || attempt === 10)) {
                 console.log('⚠️ On homepage, retrying...');
-                try { await page.goto(MEET_LINK, { waitUntil: 'networkidle2', timeout: 30000 }); } catch (_) {}
+                try { await page.goto(MEET_LINK, { waitUntil: 'networkidle2', timeout: 30000 }); } catch (_) { }
             }
         } catch (err) {
             console.log(`⚠️ Wait error: ${err.message}`);
@@ -355,7 +371,7 @@ async function dismissPopups(page) {
                 }
             }
         });
-    } catch (_) {}
+    } catch (_) { }
     await sleep(500);
 }
 
@@ -486,7 +502,7 @@ async function tabEnterJoin(page) {
                 return true;
             }
         }
-    } catch (_) {}
+    } catch (_) { }
     return false;
 }
 
@@ -522,7 +538,7 @@ async function checkJoinResult(page) {
         console.log('⚠️ Account chooser — trying to select...');
         await handleAccountChooser(page);
         await sleep(5000);
-        try { await page.goto(MEET_LINK, { waitUntil: 'networkidle2', timeout: 30000 }); } catch (_) {}
+        try { await page.goto(MEET_LINK, { waitUntil: 'networkidle2', timeout: 30000 }); } catch (_) { }
     } else if (text.includes('انضم') || text.includes('Join')) {
         console.log('⚠️ Still on join page, final attempt...');
         await forceClickJoinButton(page);
@@ -545,7 +561,7 @@ async function stayInMeeting(page) {
 
         try {
             await page.mouse.move(Math.random() * 800 + 100, Math.random() * 500 + 100);
-        } catch (_) {}
+        } catch (_) { }
 
         const waitTime = Math.min(endTime - Date.now(), 600000);
         if (waitTime <= 0) break;
@@ -565,6 +581,95 @@ async function saveFreshCookies(page) {
     } catch (err) {
         console.log(`⚠️ Cookie save failed: ${err.message}`);
     }
+}
+
+async function fillGuestName(page) {
+    console.log('📝 Checking for guest name input...');
+    try {
+        const filled = await page.evaluate((guestName) => {
+            const inputs = document.querySelectorAll('input[type="text"]');
+            for (const input of inputs) {
+                const placeholder = (input.getAttribute('placeholder') || '').toLowerCase();
+                const ariaLabel = (input.getAttribute('aria-label') || '').toLowerCase();
+                const textContext = (input.parentElement.innerText || '').toLowerCase();
+                if (placeholder.includes('name') || ariaLabel.includes('name') ||
+                    placeholder.includes('اسم') || ariaLabel.includes('اسم') ||
+                    textContext.includes('name') || textContext.includes('اسم')) {
+
+                    input.focus();
+                    input.value = guestName;
+                    input.dispatchEvent(new Event('input', { bubbles: true }));
+                    input.dispatchEvent(new Event('change', { bubbles: true }));
+                    // Also trigger typing via UI events if React is stubborn
+                    return true;
+                }
+            }
+            return false;
+        }, process.env.MEETING_NAME || 'Attendance Bot');
+
+        if (filled) {
+            console.log('✅ Found guest name input! Filled out to allow join.');
+            // Type a space and backspace to trigger React's onChange state update
+            await page.keyboard.press('Space');
+            await page.keyboard.press('Backspace');
+            await sleep(2000);
+        } else {
+            console.log('ℹ️ No guest name input found, assuming account is logged in.');
+        }
+    } catch (err) {
+        console.log(`⚠️ fillGuestName: ${err.message}`);
+    }
+}
+
+async function autoLoginFlow(page) {
+    const EMAIL = process.env.GOOGLE_EMAIL;
+    const PASSWORD = process.env.GOOGLE_PASSWORD;
+
+    if (!EMAIL || !PASSWORD) {
+        console.error('❌ Missing GOOGLE_EMAIL or GOOGLE_PASSWORD in .env file!');
+        return false;
+    }
+
+    console.log('🤖 Starting automated login flow...');
+    try {
+        await page.goto('https://accounts.google.com/ServiceLogin', { waitUntil: 'networkidle2' });
+
+        console.log('entering email...');
+        await page.waitForSelector('input[type="email"]', { timeout: 15000 });
+        await sleep(1000);
+        await page.type('input[type="email"]', EMAIL, { delay: 100 });
+        await page.keyboard.press('Enter');
+
+        console.log('Waiting for password field or verification...');
+        await sleep(4000);
+
+        // Wait for password field
+        try {
+            await page.waitForSelector('input[type="password"]', { visible: true, timeout: 15000 });
+            await sleep(1000);
+            console.log('entering password...');
+            await page.type('input[type="password"]', PASSWORD, { delay: 100 });
+            await page.keyboard.press('Enter');
+        } catch (e) {
+            console.log('⚠️ Password field timeout. Checking if additional verification required.');
+        }
+
+        console.log('Waiting for login to complete...');
+        // Wait for redirection
+        for (let i = 0; i < 20; i++) {
+            await sleep(3000);
+            const url = page.url();
+            if (url.includes('myaccount.google.com') || url.includes('mail.google.com') || url.includes('myadcenter.google.com') || url.includes('accounts.google.com/v3/signin/speedbump')) {
+                console.log('Google account login appears successful.');
+                return true;
+            }
+        }
+
+    } catch (e) {
+        console.log('⚠️ autologin error:', e.message);
+    }
+
+    return false;
 }
 
 main().catch((err) => {
