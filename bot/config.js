@@ -1,7 +1,3 @@
-// ============================================
-//  Shared configuration for the Meet Bot
-// ============================================
-
 const path = require('path');
 
 // CHROME_PATH is optional — if not set, puppeteer uses its bundled Chrome
