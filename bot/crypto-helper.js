@@ -1,8 +1,3 @@
-// ============================================
-//  ENCRYPT / DECRYPT COOKIES
-//  So they're safe in a public repo
-// ============================================
-
 var crypto = require('crypto');
 
 var ALGORITHM = 'aes-256-gcm';
