@@ -25,17 +25,11 @@ const CHROME_ARGS = [
     '--disable-setuid-sandbox',
     '--disable-dev-shm-usage',
     '--disable-gpu',
-    '--no-zygote',
     '--use-fake-ui-for-media-stream',
     '--use-fake-device-for-media-stream',
     '--auto-accept-camera-and-microphone-capture',
     '--disable-blink-features=AutomationControlled',
     '--window-size=1280,720',
-    '--disable-features=Crashpad,OptimizationGuideModelDownloading',
-    '--disable-crash-reporter',
-    '--disable-breakpad',
-    '--noerrdialogs',
-    '--disable-component-update',
 ];
 
 const CHROME_ARGS_MINIMAL = [
@@ -43,32 +37,17 @@ const CHROME_ARGS_MINIMAL = [
     '--disable-setuid-sandbox',
     '--disable-dev-shm-usage',
     '--disable-gpu',
-    '--no-zygote',
     '--disable-blink-features=AutomationControlled',
     '--window-size=1280,720',
-    '--disable-features=Crashpad,OptimizationGuideModelDownloading',
-    '--disable-crash-reporter',
-    '--disable-breakpad',
-    '--noerrdialogs',
-    '--disable-component-update',
 ];
 
 function getBrowserLaunchOptions({ minimal = false } = {}) {
     const options = {
         headless: true,
+        pipe: true,
         args: minimal ? CHROME_ARGS_MINIMAL : CHROME_ARGS,
         defaultViewport: { width: 1280, height: 720 },
         protocolTimeout: 120000,
-        ignoreDefaultArgs: ['--enable-automation'],
-        handleSIGINT: false,
-        handleSIGTERM: false,
-        handleSIGHUP: false,
-        env: {
-            ...process.env,
-            CHROME_CRASHPAD_PIPE_NAME: 'none',
-            BREAKPAD_DUMP_LOCATION: '/tmp',
-            CHROME_LOG_FILE: '/dev/null',
-        },
     };
 
     // Only set executablePath if explicitly provided
