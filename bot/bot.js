@@ -27,11 +27,13 @@ async function main() {
     // ─── Check critical cookies exist ───────────
     const hasSID = cookies.some(c => c.name === 'SID' || c.name === '__Secure-1PSID' || c.name === '__Secure-3PSID');
     const hasMeetCookies = cookies.some(c => (c.domain || '').includes('meet.google.com'));
-    console.log(`🔍 Cookie check: SID=${hasSID ? '✅' : '❌'} Meet=${hasMeetCookies ? '✅' : '⚠️'}`);
+    const hasOSID = cookies.some(c => c.name === 'OSID' || c.name === '__Secure-OSID');
+    console.log(`🔍 Cookie check: SID=${hasSID ? '✅' : '❌'} Meet=${hasMeetCookies ? '✅' : '⚠️'} OSID=${hasOSID ? '✅' : '⚠️'}`);
 
     if (!hasSID) {
-        console.log('⚠️ WARNING: No SID cookies found! Session likely won\'t work.');
-        console.log('   Re-run save-cookies.js and update GOOGLE_COOKIES secret.');
+        console.log('❌ No SID cookies! Session definitely won\'t work.');
+        console.log('   Re-run: node test-local.js (or save-cookies.js)');
+        process.exit(1);
     }
 
     // ─── Launch browser ─────────────────────────
@@ -45,29 +47,20 @@ async function main() {
     // ─── Inject cookies ─────────────────────────
     await injectCookies(page, cookies);
 
-    // ─── Verify session ─────────────────────────
+    // ─── Verify Google session ──────────────────
     const sessionOk = await verifySession(page);
     if (!sessionOk) {
         await takeScreenshot(page, 'debug_session.png');
-        console.log('❌ Session verification failed! Exiting.');
+        console.log('❌ Google session verification failed! Exiting.');
         await browser.close();
         process.exit(1);
     }
 
-    // ─── Verify Meet session specifically ───────
-    console.log('\n🔍 Verifying Meet session...');
-    const meetSessionOk = await verifyMeetSession(page);
-    if (!meetSessionOk) {
-        await takeScreenshot(page, 'debug_meet_session.png');
-        console.log('❌ Meet session invalid! You need to refresh cookies.');
-        console.log('   Run: node save-cookies.js');
-        console.log('   Then update GOOGLE_COOKIES secret on GitHub.');
-        await browser.close();
-        process.exit(1);
-    }
-
-    // ─── Navigate to Meet ───────────────────────
-    console.log(`\n⏳ Going to ${MEET_LINK}`);
+    // ─── Go DIRECTLY to the meeting link ────────
+    // Skip meet.google.com homepage check — it often redirects to
+    // workspace marketing page even with valid cookies in headless mode.
+    // The real test is whether the actual meeting link works.
+    console.log(`\n⏳ Going directly to meeting: ${MEET_LINK}`);
     try {
         await page.goto(MEET_LINK, { waitUntil: 'networkidle2', timeout: 60000 });
     } catch (_) { /* timeout is non-fatal */ }
@@ -75,29 +68,66 @@ async function main() {
     await sleep(3000);
     await takeScreenshot(page, 'step0_after_navigate.png');
 
-    // ─── Handle "Choose an account" page ────────
-    await handleAccountChooser(page);
+    // ─── Check what page we landed on ───────────
+    const landingUrl = page.url();
+    const landingText = await getPageText(page);
+    console.log(`📍 Landed on: ${landingUrl}`);
+    console.log(`📄 Page text: "${landingText.substring(0, 150).replace(/\n/g, ' ')}..."`);
 
-    // ─── Check if redirected to sign-in ─────────
-    const currentUrl = page.url();
-    if (currentUrl.includes('ServiceLogin') || currentUrl.includes('signin/identifier') || currentUrl.includes('signin/v2')) {
-        console.log('❌ Redirected to sign-in page! Session expired for Meet.');
+    // Check if redirected to sign-in
+    if (landingUrl.includes('ServiceLogin') || landingUrl.includes('signin/identifier') || landingUrl.includes('signin/v2')) {
+        console.log('❌ Redirected to sign-in! Session expired.');
         await takeScreenshot(page, 'debug_signin_redirect.png');
         await browser.close();
         process.exit(1);
     }
 
-    // ─── Check for "can't join" immediately ─────
-    const initialText = await getPageText(page);
-    if (isMeetingUnavailable(initialText)) {
-        console.log('❌ Meeting is not available:');
-        console.log(`   "${initialText.substring(0, 150)}"`);
-        await takeScreenshot(page, 'debug_meeting_unavailable.png');
+    // Check for workspace/marketing page redirect
+    if (landingUrl.includes('workspace.google.com')) {
+        console.log('❌ Redirected to workspace marketing page!');
+        console.log('   Meet cookies are not working in headless mode.');
+        console.log('   Trying direct URL with authuser parameter...');
 
-        // Still save cookies and exit gracefully
+        // Try with authuser=0
+        try {
+            const meetUrlWithAuth = MEET_LINK + (MEET_LINK.includes('?') ? '&' : '?') + 'authuser=0';
+            console.log(`   Trying: ${meetUrlWithAuth}`);
+            await page.goto(meetUrlWithAuth, { waitUntil: 'networkidle2', timeout: 30000 });
+            await sleep(3000);
+
+            const retryUrl = page.url();
+            console.log(`   📍 Result: ${retryUrl}`);
+
+            if (retryUrl.includes('workspace.google.com') || retryUrl.includes('ServiceLogin')) {
+                console.log('❌ Still redirected. Session not valid for Meet.');
+                await takeScreenshot(page, 'debug_workspace_redirect.png');
+                await browser.close();
+                process.exit(1);
+            }
+        } catch (_) {}
+    }
+
+    // ─── Handle "Choose an account" page ────────
+    await handleAccountChooser(page);
+
+    // Re-check URL after account chooser
+    const postChooseUrl = page.url();
+    if (postChooseUrl.includes('ServiceLogin') || postChooseUrl.includes('signin')) {
+        console.log('❌ Account selection led to sign-in. Session dead.');
+        await takeScreenshot(page, 'debug_post_choose_signin.png');
+        await browser.close();
+        process.exit(1);
+    }
+
+    // ─── Check for "can't join" ─────────────────
+    const pageText = await getPageText(page);
+    if (isMeetingUnavailable(pageText)) {
+        console.log('⚠️ Meeting is not available right now:');
+        console.log(`   "${pageText.substring(0, 150).replace(/\n/g, ' ')}"`);
+        await takeScreenshot(page, 'debug_meeting_unavailable.png');
         await saveFreshCookies(page);
         await browser.close();
-        console.log('\n⚠️ Exiting — meeting not available. Bot will retry next scheduled run.');
+        console.log('\n⚠️ Meeting not available. Will retry next scheduled run.');
         process.exit(0);
     }
 
@@ -107,16 +137,9 @@ async function main() {
     await takeScreenshot(page, 'step1_before_join.png');
 
     if (!joinReady) {
-        console.log('⚠️ Could not reach join page. Checking state...');
+        console.log('⚠️ Could not reach join page.');
         const stateText = await getPageText(page);
-        console.log(`   Page text: "${stateText.substring(0, 150)}"`);
-
-        if (isMeetingUnavailable(stateText)) {
-            console.log('❌ Meeting not available.');
-            await saveFreshCookies(page);
-            await browser.close();
-            process.exit(0);
-        }
+        console.log(`   State: "${stateText.substring(0, 200).replace(/\n/g, ' ')}"`);
     }
 
     // ─── Dismiss popups ─────────────────────────
@@ -134,7 +157,7 @@ async function main() {
 
     // ─── Join meeting ───────────────────────────
     console.log('\n🚪 JOINING...');
-    await tryJoin(page, { maxAttempts: 3 });
+    await tryJoin(page, { maxAttempts: 5 });
     await takeScreenshot(page, 'step3_after_join.png');
 
     // ─── Check join result ──────────────────────
@@ -178,7 +201,7 @@ function isMeetingUnavailable(text) {
         lower.includes('this meeting has ended') ||
         lower.includes('meeting not found') ||
         lower.includes('this video call has ended') ||
-        (lower.includes('return to home screen') && (lower.includes('unavailable') || lower.includes("can't join")))
+        (lower.includes('return to home screen') && lower.includes("can't"))
     );
 }
 
@@ -188,155 +211,53 @@ async function takeScreenshot(page, filename) {
     } catch (_) { /* non-critical */ }
 }
 
-/**
- * Verify Meet-specific session by visiting meet.google.com
- * and checking if we see the authenticated interface.
- */
-async function verifyMeetSession(page) {
-    try {
-        await page.goto('https://meet.google.com/', {
-            waitUntil: 'networkidle2',
-            timeout: 30000,
-        });
-        await sleep(4000);
-
-        const url = page.url();
-        const text = await getPageText(page);
-
-        console.log(`📍 Meet URL: ${url}`);
-        console.log(`📄 Meet text: "${text.substring(0, 100)}..."`);
-
-        // If we see "Sign in" button or marketing page, we're NOT authenticated
-        if (url.includes('ServiceLogin') || url.includes('signin')) {
-            console.log('❌ Meet redirected to sign-in');
-            return false;
-        }
-
-        // Check for the marketing/unauthenticated page
-        // The Arabic marketing page shows "تسجيل الدخول" (Sign in) and "تجربة Meet للعمل"
-        if (text.includes('تسجيل الدخول') && text.includes('تجربة Meet')) {
-            console.log('❌ Meet showing marketing/unauthenticated page (Arabic)');
-            return false;
-        }
-        if (text.includes('Sign in') && text.includes('Try Meet for work')) {
-            console.log('❌ Meet showing marketing/unauthenticated page (English)');
-            return false;
-        }
-
-        // Check for Choose an account
-        if (text.includes('Choose an account') || text.includes('اختيار حساب')) {
-            console.log('⚠️ "Choose an account" on Meet — trying to select...');
-            await handleAccountChooser(page);
-            await sleep(5000);
-
-            const newUrl = page.url();
-            if (newUrl.includes('ServiceLogin') || newUrl.includes('signin')) {
-                console.log('❌ Account selection led to sign-in page');
-                return false;
-            }
-
-            const newText = await getPageText(page);
-            if (newText.includes('تسجيل الدخول') || newText.includes('Sign in')) {
-                console.log('❌ Still not authenticated after account selection');
-                return false;
-            }
-        }
-
-        // Positive checks — authenticated Meet shows these
-        if (text.includes('New meeting') || text.includes('اجتماع جديد') ||
-            text.includes('Enter a code') || text.includes('إدخال الرمز') ||
-            text.includes('Join a meeting') || text.includes('الانضمام')) {
-            console.log('✅ Meet session verified!');
-            return true;
-        }
-
-        // If we got here, unclear state — log and assume OK for now
-        console.log('⚠️ Meet state unclear, proceeding cautiously...');
-        await takeScreenshot(page, 'debug_meet_verify.png');
-        return true;
-    } catch (err) {
-        console.log(`⚠️ Meet verification error: ${err.message}`);
-        return true; // Don't block on errors
-    }
-}
-
 async function handleAccountChooser(page) {
-    await sleep(3000);
+    await sleep(2000);
     try {
         const text = await getPageText(page);
-        if (text.includes('Choose an account') || text.includes('اختيار حساب')) {
-            console.log('🔄 "Choose an account" page detected, clicking account...');
-            const clicked = await page.evaluate(() => {
-                const items = document.querySelectorAll('[data-identifier], [data-email]');
-                if (items.length > 0) {
-                    items[0].click();
-                    return 'data-identifier';
-                }
+        if (!text.includes('Choose an account') && !text.includes('اختيار حساب')) {
+            return; // Not on account chooser
+        }
 
-                const listItems = document.querySelectorAll('li');
-                for (const li of listItems) {
-                    const t = li.textContent || '';
-                    if (t.includes('@') && !t.includes('Use another') && !t.includes('Remove')) {
-                        li.click();
-                        return 'li-email';
-                    }
-                }
+        console.log('🔄 "Choose an account" detected, clicking account...');
 
-                const divs = document.querySelectorAll('div[role="link"], div[tabindex="0"]');
-                for (const div of divs) {
-                    const t = div.textContent || '';
-                    if (t.includes('@gmail.com') && !t.includes('Use another')) {
-                        div.click();
-                        return 'div-email';
-                    }
-                }
-                return null;
-            });
-
-            if (clicked) {
-                console.log(`✅ Clicked account via: ${clicked}`);
-                await sleep(8000);
-                await takeScreenshot(page, 'debug_after_account_choose.png');
-
-                // Check if clicking account led to sign-in
-                const newUrl = page.url();
-                if (newUrl.includes('ServiceLogin') || newUrl.includes('signin/identifier')) {
-                    console.log('❌ Account click led to sign-in — session is dead');
-                }
-            } else {
-                console.log('⚠️ Could not find account to click');
+        const clicked = await page.evaluate(() => {
+            // Try data-identifier first
+            const items = document.querySelectorAll('[data-identifier], [data-email]');
+            if (items.length > 0) {
+                items[0].click();
+                return 'data-identifier';
             }
+            // Try list items with email
+            const listItems = document.querySelectorAll('li');
+            for (const li of listItems) {
+                const t = li.textContent || '';
+                if (t.includes('@') && !t.includes('Use another') && !t.includes('Remove')) {
+                    li.click();
+                    return 'li-email';
+                }
+            }
+            // Try divs
+            const divs = document.querySelectorAll('div[role="link"], div[tabindex="0"]');
+            for (const div of divs) {
+                const t = div.textContent || '';
+                if (t.includes('@gmail.com') && !t.includes('Use another')) {
+                    div.click();
+                    return 'div-email';
+                }
+            }
+            return null;
+        });
+
+        if (clicked) {
+            console.log(`✅ Clicked account via: ${clicked}`);
+            await sleep(8000);
+            await takeScreenshot(page, 'debug_after_account_choose.png');
+        } else {
+            console.log('⚠️ Could not find account to click');
         }
     } catch (err) {
         console.log(`⚠️ Account chooser handler: ${err.message}`);
-    }
-}
-
-async function findByXPath(page, xpath) {
-    try {
-        const elements = await page.$$(`xpath/${xpath}`);
-        return elements;
-    } catch (err) {
-        try {
-            const handles = await page.evaluateHandle((xp) => {
-                const results = [];
-                const query = document.evaluate(xp, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
-                for (let i = 0; i < query.snapshotLength; i++) {
-                    results.push(query.snapshotItem(i));
-                }
-                return results;
-            }, xpath);
-
-            const properties = await handles.getProperties();
-            const elements = [];
-            for (const prop of properties.values()) {
-                const element = prop.asElement();
-                if (element) elements.push(element);
-            }
-            return elements;
-        } catch (fallbackErr) {
-            return [];
-        }
     }
 }
 
@@ -348,49 +269,44 @@ async function waitForJoinPage(page) {
         try {
             const bodyText = await getPageText(page);
 
-            // Check for session expiry
-            if (url.includes('ServiceLogin') || url.includes('signin/identifier') || url.includes('signin/v2')) {
-                console.log(`❌ Session expired during meeting join! URL: ${url}`);
-                await takeScreenshot(page, 'debug_session_expired.png');
+            // Session expired check
+            if (url.includes('ServiceLogin') || url.includes('signin/identifier')) {
+                console.log('❌ Session expired!');
                 return false;
             }
 
-            // Check for "Choose an account" and handle it
+            // Account chooser
             if (bodyText.includes('Choose an account') || bodyText.includes('اختيار حساب')) {
-                console.log('⚠️ Account chooser appeared during wait, handling...');
                 await handleAccountChooser(page);
-                await sleep(3000);
                 continue;
             }
 
-            // Check for meeting unavailable
+            // Meeting unavailable
             if (isMeetingUnavailable(bodyText)) {
                 console.log(`❌ Meeting unavailable [${attempt + 1}]`);
-                await takeScreenshot(page, 'debug_unavailable.png');
                 return false;
             }
 
-            // Check for join button using evaluate (most reliable)
-            for (const textMatch of ['Join now', 'Ask to join', 'انضم الآن', 'طلب الانضمام', 'انضمام', 'Join']) {
+            // Check for join button text
+            for (const textMatch of JOIN_TEXTS) {
                 const found = await page.evaluate((text) => {
-                    const spans = document.querySelectorAll('span, button');
-                    for (const el of spans) {
+                    const elements = document.querySelectorAll('span, button');
+                    for (const el of elements) {
                         if (el.textContent.includes(text)) return true;
                     }
                     return false;
                 }, textMatch);
 
                 if (found) {
-                    console.log(`✅ Join page ready! [${attempt + 1}] Found text: "${textMatch}"`);
+                    console.log(`✅ Join page ready! [${attempt + 1}] Found: "${textMatch}"`);
                     return true;
                 }
             }
 
-            // Also check for the pre-join screen (name input, camera preview, etc.)
+            // Check for pre-join screen indicators
             const hasPreJoin = await page.evaluate(() => {
-                // Pre-join screen typically has mic/camera toggle buttons
-                const buttons = document.querySelectorAll('[data-is-muted], [aria-label*="microphone"], [aria-label*="camera"], [aria-label*="ميكروفون"], [aria-label*="كاميرا"]');
-                return buttons.length > 0;
+                const el = document.querySelector('[data-is-muted], [aria-label*="microphone"], [aria-label*="camera"], [aria-label*="ميكروفون"], [aria-label*="كاميرا"]');
+                return !!el;
             });
 
             if (hasPreJoin) {
@@ -398,20 +314,24 @@ async function waitForJoinPage(page) {
                 return true;
             }
 
+            // Check for "connecting" state (already joining)
+            if (bodyText.includes('جارٍ الاتصال') || bodyText.includes('Connecting')) {
+                console.log(`✅ Already connecting! [${attempt + 1}]`);
+                return true;
+            }
+
             if (attempt % 5 === 0) {
-                const shortText = bodyText.replace(/\n/g, ' ').substring(0, 100);
-                console.log(`⏳ Waiting... [${attempt + 1}] URL: ${url} | Text: ${shortText}...`);
+                const short = bodyText.replace(/\n/g, ' ').substring(0, 100);
+                console.log(`⏳ [${attempt + 1}] URL: ${url.substring(0, 60)} | "${short}..."`);
+            }
+
+            // Retry if stuck on meet homepage
+            if ((url === 'https://meet.google.com/' || url === 'https://meet.google.com') && (attempt === 3 || attempt === 10)) {
+                console.log('⚠️ On homepage, retrying...');
+                try { await page.goto(MEET_LINK, { waitUntil: 'networkidle2', timeout: 30000 }); } catch (_) {}
             }
         } catch (err) {
             console.log(`⚠️ Wait error: ${err.message}`);
-        }
-
-        // Retry navigation if stuck on homepage
-        if ((url === 'https://meet.google.com/' || url === 'https://meet.google.com') && (attempt === 3 || attempt === 10)) {
-            console.log('⚠️ On homepage, retrying navigation...');
-            try {
-                await page.goto(MEET_LINK, { waitUntil: 'networkidle2', timeout: 30000 });
-            } catch (_) { }
         }
     }
 
@@ -435,19 +355,26 @@ async function dismissPopups(page) {
                 }
             }
         });
-    } catch (_) { /* non-critical */ }
+    } catch (_) {}
     await sleep(500);
 }
 
-async function tryJoin(page, { maxAttempts = 3 } = {}) {
+async function tryJoin(page, { maxAttempts = 5 } = {}) {
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         const clicked = await clickJoinButton(page);
         if (clicked) {
             console.log(`✅ Join button clicked (attempt ${attempt})`);
-            await sleep(8000);
+            await sleep(10000);
 
-            const stillOnJoinPage = await isOnJoinPage(page);
-            if (!stillOnJoinPage) return true;
+            const result = await getPageText(page);
+            if (result.includes('Leave') || result.includes('مغادرة') ||
+                result.includes('جارٍ الاتصال') || result.includes('Connecting')) {
+                console.log('✅ Join successful or connecting!');
+                return true;
+            }
+
+            const stillJoinPage = await isOnJoinPage(page);
+            if (!stillJoinPage) return true;
             console.log(`⚠️ Still on join page after attempt ${attempt}`);
         }
 
@@ -458,9 +385,9 @@ async function tryJoin(page, { maxAttempts = 3 } = {}) {
 
             const forcedClick = await forceClickJoinButton(page);
             if (forcedClick) {
-                await sleep(8000);
-                const stillOnJoinPage = await isOnJoinPage(page);
-                if (!stillOnJoinPage) return true;
+                await sleep(10000);
+                const stillJoinPage = await isOnJoinPage(page);
+                if (!stillJoinPage) return true;
             }
         }
     }
@@ -483,28 +410,23 @@ async function clickJoinButton(page) {
 
                 info.push(`${text.substring(0, 60)} [${Math.round(rect.width)}x${Math.round(rect.height)}]`);
 
-                if (skipTexts.some((s) => text.includes(s))) continue;
-
-                if (joinTexts.some((j) => text.includes(j))) {
+                if (skipTexts.some(s => text.includes(s))) continue;
+                if (joinTexts.some(j => text.includes(j))) {
                     btn.click();
                     return { clicked: text, info };
                 }
             }
 
+            // Blue button fallback
             let best = null;
             let bestArea = 0;
             for (const btn of buttons) {
                 const rect = btn.getBoundingClientRect();
                 const style = window.getComputedStyle(btn);
                 const text = btn.textContent.trim();
-
-                if (skipTexts.some((s) => text.includes(s))) continue;
-
+                if (skipTexts.some(s => text.includes(s))) continue;
                 const area = rect.width * rect.height;
-                const isBlue =
-                    style.backgroundColor.includes('26, 115, 232') ||
-                    style.backgroundColor.includes('66, 133, 244');
-
+                const isBlue = style.backgroundColor.includes('26, 115, 232') || style.backgroundColor.includes('66, 133, 244');
                 if (isBlue && area > bestArea && area > 3000) {
                     best = btn;
                     bestArea = area;
@@ -537,7 +459,7 @@ async function forceClickJoinButton(page) {
             const buttons = document.querySelectorAll('button');
             for (const btn of buttons) {
                 const text = btn.textContent.trim();
-                if (joinTexts.some((j) => text.includes(j))) {
+                if (joinTexts.some(j => text.includes(j))) {
                     btn.focus();
                     btn.click();
                     btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
@@ -556,18 +478,15 @@ async function tabEnterJoin(page) {
         for (let t = 0; t < 20; t++) {
             await page.keyboard.press('Tab');
             await sleep(200);
-            const focused = await page
-                .evaluate(() => document.activeElement ? document.activeElement.textContent.trim() : '')
-                .catch(() => '');
-
+            const focused = await page.evaluate(() => document.activeElement ? document.activeElement.textContent.trim() : '').catch(() => '');
             if (focused.includes('انضم') || focused.includes('Join') || focused.includes('الانضمام')) {
                 console.log(`✅ Focused: "${focused}" → Enter`);
                 await page.keyboard.press('Enter');
-                await sleep(8000);
+                await sleep(10000);
                 return true;
             }
         }
-    } catch (_) { /* non-critical */ }
+    } catch (_) {}
     return false;
 }
 
@@ -583,26 +502,33 @@ async function isOnJoinPage(page) {
 }
 
 async function checkJoinResult(page) {
-    let text = await getPageText(page);
+    const text = await getPageText(page);
+    const url = page.url();
 
     if (text.includes("can't join") || text.includes('لا يمكنك')) {
-        console.log('❌ Rejected');
+        console.log('❌ Rejected from meeting');
     } else if (text.includes('Leave') || text.includes('مغادرة')) {
-        console.log('✅ JOINED!');
+        console.log('✅ JOINED SUCCESSFULLY!');
+    } else if (text.includes('جارٍ الاتصال') || text.includes('Connecting')) {
+        console.log('⏳ Connecting... waiting more...');
+        await sleep(15000);
+        const newText = await getPageText(page);
+        if (newText.includes('Leave') || newText.includes('مغادرة')) {
+            console.log('✅ JOINED SUCCESSFULLY!');
+        } else {
+            console.log(`⚠️ Still connecting: "${newText.substring(0, 100)}"`);
+        }
     } else if (text.includes('Choose an account') || text.includes('اختيار حساب')) {
-        console.log('⚠️ Account chooser appeared, trying to select account...');
+        console.log('⚠️ Account chooser — trying to select...');
         await handleAccountChooser(page);
         await sleep(5000);
-        try {
-            await page.goto(MEET_LINK, { waitUntil: 'networkidle2', timeout: 30000 });
-        } catch (_) {}
-        await sleep(5000);
-    } else if (text.includes('انضم') || text.includes('Join') || text.includes('الانضمام')) {
+        try { await page.goto(MEET_LINK, { waitUntil: 'networkidle2', timeout: 30000 }); } catch (_) {}
+    } else if (text.includes('انضم') || text.includes('Join')) {
         console.log('⚠️ Still on join page, final attempt...');
         await forceClickJoinButton(page);
-        await sleep(8000);
+        await sleep(10000);
     } else {
-        console.log(`⚠️ Unknown state: ${text.substring(0, 200)}`);
+        console.log(`⚠️ Unknown state: "${text.substring(0, 200).replace(/\n/g, ' ')}"`);
     }
 }
 
@@ -619,7 +545,7 @@ async function stayInMeeting(page) {
 
         try {
             await page.mouse.move(Math.random() * 800 + 100, Math.random() * 500 + 100);
-        } catch (_) { /* non-critical */ }
+        } catch (_) {}
 
         const waitTime = Math.min(endTime - Date.now(), 600000);
         if (waitTime <= 0) break;

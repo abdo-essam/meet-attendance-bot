@@ -75,11 +75,15 @@ jobs:
           COOKIE_PASSWORD: ${{ secrets.COOKIE_PASSWORD }}
         run: |
           cd bot
-          if [ -f ../cookies/session.enc ]; then
-            echo "Using encrypted cookies from repo"
-          elif [ -n "$GOOGLE_COOKIES" ]; then
+          # Always write fresh cookies from secret (overrides any stale repo files)
+          if [ -n "$GOOGLE_COOKIES" ]; then
             echo "$GOOGLE_COOKIES" | base64 -d > cookies.json
-            echo "Using cookies from GitHub Secret"
+            echo "✅ Wrote fresh cookies from GitHub Secret"
+            echo "Cookie count: $(cat cookies.json | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))' 2>/dev/null || echo 'unknown')"
+          elif [ -f ../cookies/session.enc ]; then
+            echo "Using encrypted cookies from repo (no secret found)"
+          else
+            echo "⚠️ No cookies found!"
           fi
 
       - name: 🤖 Run bot

@@ -12,42 +12,50 @@ const {
 } = require('./config');
 
 /**
- * Load cookies from encrypted file, raw JSON, or GOOGLE_COOKIES env var.
- * Returns an array of cookie objects (empty if nothing found).
+ * Load cookies — priority order:
+ * 1. GOOGLE_COOKIES env var (always freshest from secret)
+ * 2. Encrypted file (committed by previous run)
+ * 3. Raw JSON file (local backup)
  */
 function loadCookies() {
-    // 1. Encrypted file
+    // 1. Environment variable FIRST (this is the GitHub secret — most reliable)
+    if (process.env.GOOGLE_COOKIES) {
+        try {
+            const decoded = Buffer.from(process.env.GOOGLE_COOKIES, 'base64').toString('utf8');
+            const cookies = JSON.parse(decoded);
+            if (cookies.length > 0) {
+                console.log(`✅ Loaded ${cookies.length} cookies from GOOGLE_COOKIES secret`);
+                return cookies;
+            }
+        } catch (err) {
+            console.log(`⚠️ Secret cookie load failed: ${err.message}`);
+        }
+    }
+
+    // 2. Encrypted file (from previous bot run)
     if (fs.existsSync(ENCRYPTED_COOKIES_PATH)) {
         try {
             const raw = fs.readFileSync(ENCRYPTED_COOKIES_PATH, 'utf8');
             const cookies = JSON.parse(cryptoHelper.decrypt(raw, COOKIE_PASSWORD));
-            console.log(`✅ Loaded ${cookies.length} cookies from encrypted file`);
-            return cookies;
+            if (cookies.length > 0) {
+                console.log(`✅ Loaded ${cookies.length} cookies from encrypted file`);
+                return cookies;
+            }
         } catch (err) {
             console.log(`⚠️ Encrypted cookie load failed: ${err.message}`);
         }
     }
 
-    // 2. Raw JSON file
+    // 3. Raw JSON file (local backup)
     if (fs.existsSync(RAW_COOKIES_PATH)) {
         try {
             const cookies = JSON.parse(fs.readFileSync(RAW_COOKIES_PATH, 'utf8'));
-            console.log(`✅ Loaded ${cookies.length} cookies from cookies.json`);
-            return cookies;
+            if (cookies.length > 0) {
+                console.log(`✅ Loaded ${cookies.length} cookies from cookies.json`);
+                return cookies;
+            }
         } catch (err) {
             console.log(`⚠️ Raw cookie load failed: ${err.message}`);
-        }
-    }
-
-    // 3. Environment variable (base64-encoded)
-    if (process.env.GOOGLE_COOKIES) {
-        try {
-            const decoded = Buffer.from(process.env.GOOGLE_COOKIES, 'base64').toString('utf8');
-            const cookies = JSON.parse(decoded);
-            console.log(`✅ Loaded ${cookies.length} cookies from GOOGLE_COOKIES secret`);
-            return cookies;
-        } catch (err) {
-            console.log(`⚠️ Secret cookie load failed: ${err.message}`);
         }
     }
 
