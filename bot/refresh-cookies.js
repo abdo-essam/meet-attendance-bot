@@ -1,8 +1,3 @@
-// ============================================
-//  Cookie Refresh — visit Google services
-//  to keep the session alive
-// ============================================
-
 const { CHROME_PATH } = require('./config');
 const { loadCookies, injectCookies, extractCookies, saveCookies } = require('./cookie-manager');
 const { sleep, launchBrowser, createStealthPage } = require('./browser-helper');
