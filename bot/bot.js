@@ -1,7 +1,6 @@
 // ============================================
-//  Google Meet Attendance Bot
+// Google Meet Attendance Bot
 // ============================================
-
 const fs = require('fs');
 const path = require('path');
 const { MEET_LINK, DURATION_MINUTES, MEETING_NAME, REPORTS_DIR } = require('./config');
@@ -33,11 +32,9 @@ async function main() {
 
     // ─── Verify session ─────────────────────────
     const sessionOk = await verifySession(page);
-
     if (!fs.existsSync(REPORTS_DIR)) {
         fs.mkdirSync(REPORTS_DIR, { recursive: true });
     }
-
     if (!sessionOk) {
         await takeScreenshot(page, 'debug_session.png');
         await browser.close();
@@ -50,10 +47,12 @@ async function main() {
         await page.goto(MEET_LINK, { waitUntil: 'networkidle2', timeout: 60000 });
     } catch (_) { /* timeout is non-fatal */ }
 
+    // ─── Handle "Choose an account" page ────────
+    await handleAccountChooser(page);
+
     // ─── Wait for join page ─────────────────────
     console.log('⏳ Waiting for join page...');
     const joinReady = await waitForJoinPage(page);
-
     await takeScreenshot(page, 'step1_before_join.png');
 
     // ─── Dismiss popups ─────────────────────────
@@ -67,13 +66,11 @@ async function main() {
     await page.keyboard.press('e');
     await page.keyboard.up('Control');
     await sleep(1000);
-
     await takeScreenshot(page, 'step2_after_mute.png');
 
     // ─── Join meeting ───────────────────────────
     console.log('\n🚪 JOINING...');
     await tryJoin(page, { maxAttempts: 3 });
-
     await takeScreenshot(page, 'step3_after_join.png');
 
     // ─── Check join result ──────────────────────
@@ -116,38 +113,160 @@ async function takeScreenshot(page, filename) {
     } catch (_) { /* non-critical */ }
 }
 
-async function waitForJoinPage(page) {
-    const btnLocators = [
-        'span:contains("Join now")', 'span:contains("Ask to join")',
-        'span:contains("انضمام")', 'span:contains("طلب انضمام")'
-    ];
+/**
+ * Handle the "Choose an account" page that Google shows.
+ * Clicks the first account (non-"Use another account") to proceed.
+ */
+async function handleAccountChooser(page) {
+    await sleep(3000);
+    try {
+        const text = await page.evaluate(() => document.body ? document.body.innerText : '');
+        if (text.includes('Choose an account') || text.includes('اختيار حساب')) {
+            console.log('🔄 "Choose an account" page detected, clicking account...');
+            const clicked = await page.evaluate(() => {
+                // Find all clickable account entries (li elements or divs with data-identifier)
+                const items = document.querySelectorAll('[data-identifier], [data-email]');
+                if (items.length > 0) {
+                    items[0].click();
+                    return 'data-identifier';
+                }
 
+                // Fallback: look for list items that contain an email
+                const listItems = document.querySelectorAll('li');
+                for (const li of listItems) {
+                    const t = li.textContent || '';
+                    if (t.includes('@') && !t.includes('Use another') && !t.includes('Remove')) {
+                        li.click();
+                        return 'li-email';
+                    }
+                }
+
+                // Fallback: click any div containing the email
+                const divs = document.querySelectorAll('div[role="link"], div[tabindex="0"]');
+                for (const div of divs) {
+                    const t = div.textContent || '';
+                    if (t.includes('@gmail.com') && !t.includes('Use another')) {
+                        div.click();
+                        return 'div-email';
+                    }
+                }
+                return null;
+            });
+
+            if (clicked) {
+                console.log(`✅ Clicked account via: ${clicked}`);
+                await sleep(8000);
+                await takeScreenshot(page, 'debug_after_account_choose.png');
+            } else {
+                console.log('⚠️ Could not find account to click');
+                // Try clicking first non-utility option
+                await page.evaluate(() => {
+                    const links = document.querySelectorAll('a, [role="link"]');
+                    for (const link of links) {
+                        const t = (link.textContent || '').trim();
+                        if (t.includes('@') || t.includes('gmail')) {
+                            link.click();
+                            return;
+                        }
+                    }
+                });
+                await sleep(8000);
+            }
+        }
+    } catch (err) {
+        console.log(`⚠️ Account chooser handler: ${err.message}`);
+    }
+}
+
+/**
+ * Find elements by XPath — compatible with Puppeteer v24+
+ * Replaces the removed page.$x() method.
+ */
+async function findByXPath(page, xpath) {
+    try {
+        // Puppeteer v24+ uses $$ with xpath/ prefix
+        const elements = await page.$$(`xpath/${xpath}`);
+        return elements;
+    } catch (err) {
+        // Fallback: evaluate in page context
+        try {
+            const handles = await page.evaluateHandle((xp) => {
+                const results = [];
+                const query = document.evaluate(xp, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
+                for (let i = 0; i < query.snapshotLength; i++) {
+                    results.push(query.snapshotItem(i));
+                }
+                return results;
+            }, xpath);
+
+            const properties = await handles.getProperties();
+            const elements = [];
+            for (const prop of properties.values()) {
+                const element = prop.asElement();
+                if (element) elements.push(element);
+            }
+            return elements;
+        } catch (fallbackErr) {
+            return [];
+        }
+    }
+}
+
+async function waitForJoinPage(page) {
     for (let attempt = 0; attempt < 30; attempt++) {
         await sleep(2000);
         const url = page.url();
 
         try {
-            // First check if a recognizable join button exists
-            for (const textMatch of ['Join now', 'Ask to join', 'انضمام', 'طلب انضمام', 'Join']) {
-                const elements = await page.$x(`//span[contains(text(), '${textMatch}')]`);
+            // Check for "Choose an account" and handle it
+            const bodyText = await page.evaluate(() => document.body ? document.body.innerText : '');
+            if (bodyText.includes('Choose an account') || bodyText.includes('اختيار حساب')) {
+                console.log('⚠️ Account chooser appeared during wait, handling...');
+                await handleAccountChooser(page);
+                continue;
+            }
+
+            // Check for join button using multiple methods
+            for (const textMatch of ['Join now', 'Ask to join', 'انضمام', 'طلب انضمام', 'Join', 'انضم الآن']) {
+                // Method 1: Use $$ with xpath prefix (Puppeteer v24+)
+                const elements = await findByXPath(page, `//span[contains(text(), '${textMatch}')]`);
                 if (elements.length > 0) {
                     console.log(`✅ Join page ready! [${attempt + 1}] Found text: "${textMatch}"`);
                     return true;
                 }
+
+                // Method 2: Use page.evaluate as backup
+                const found = await page.evaluate((text) => {
+                    const spans = document.querySelectorAll('span');
+                    for (const span of spans) {
+                        if (span.textContent.includes(text)) return true;
+                    }
+                    return false;
+                }, textMatch);
+                
+                if (found) {
+                    console.log(`✅ Join page ready! [${attempt + 1}] Found text (eval): "${textMatch}"`);
+                    return true;
+                }
             }
 
-            // If no join button, dump what we DO see on the page
             const text = await page.evaluate(() => document.body ? document.body.innerText.replace(/\n/g, ' ').substring(0, 200) : '');
 
             if (text.toLowerCase().includes('return to home screen') && text.toLowerCase().includes('unavailable')) {
                 console.log(`❌ Meeting unavailable [${attempt + 1}] URL: ${url}`);
-                console.log(`🔍 [DEBUG] Page text: ${text}`);
                 await takeScreenshot(page, 'debug_unavailable.png');
                 return false;
             }
 
+            // Check for sign-in redirect
+            if (url.includes('ServiceLogin') || url.includes('signin/identifier') || url.includes('signin/v2')) {
+                console.log(`❌ Session expired during meeting join! URL: ${url}`);
+                await takeScreenshot(page, 'debug_session_expired.png');
+                return false;
+            }
+
             if (attempt % 5 === 0) {
-                console.log(`⏳ Waiting... URL: ${url} | Text: ${text.substring(0, 50)}...`);
+                console.log(`⏳ Waiting... [${attempt + 1}] URL: ${url} | Text: ${text.substring(0, 80)}...`);
             }
         } catch (err) {
             console.log(`⚠️ Wait error: ${err.message}`);
@@ -155,7 +274,7 @@ async function waitForJoinPage(page) {
 
         // Retry navigation if stuck on homepage
         if ((url === 'https://meet.google.com/' || url === 'https://meet.google.com') && (attempt === 3 || attempt === 10)) {
-            console.log('⚠️ On homepage, retrying navigation to absolute link...');
+            console.log('⚠️ On homepage, retrying navigation...');
             try {
                 await page.goto(MEET_LINK, { waitUntil: 'networkidle2', timeout: 30000 });
             } catch (_) { }
@@ -186,24 +305,18 @@ async function dismissPopups(page) {
     await sleep(500);
 }
 
-/**
- * Try to click the join button using multiple strategies, with retries.
- */
 async function tryJoin(page, { maxAttempts = 3 } = {}) {
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-        // Strategy 1: Direct DOM click on known join texts
         const clicked = await clickJoinButton(page);
         if (clicked) {
             console.log(`✅ Join button clicked (attempt ${attempt})`);
             await sleep(8000);
 
-            // Check if we actually joined
             const stillOnJoinPage = await isOnJoinPage(page);
             if (!stillOnJoinPage) return true;
             console.log(`⚠️ Still on join page after attempt ${attempt}`);
         }
 
-        // Strategy 2: Press Escape first, then retry click with focus+dispatch
         if (attempt < maxAttempts) {
             console.log(`⚠️ Retrying join (attempt ${attempt + 1})...`);
             await page.keyboard.press('Escape');
@@ -218,7 +331,6 @@ async function tryJoin(page, { maxAttempts = 3 } = {}) {
         }
     }
 
-    // Final fallback: Tab + Enter
     console.log('⚠️ Trying Tab+Enter fallback...');
     return await tabEnterJoin(page);
 }
@@ -245,7 +357,6 @@ async function clickJoinButton(page) {
                 }
             }
 
-            // Blue button fallback
             let best = null;
             let bestArea = 0;
             for (const btn of buttons) {
@@ -347,6 +458,15 @@ async function checkJoinResult(page) {
         console.log('❌ Rejected');
     } else if (text.includes('Leave') || text.includes('مغادرة')) {
         console.log('✅ JOINED!');
+    } else if (text.includes('Choose an account') || text.includes('اختيار حساب')) {
+        console.log('⚠️ Account chooser appeared, trying to select account...');
+        await handleAccountChooser(page);
+        await sleep(5000);
+        // Re-navigate to meet
+        try {
+            await page.goto(MEET_LINK, { waitUntil: 'networkidle2', timeout: 30000 });
+        } catch (_) {}
+        await sleep(5000);
     } else if (text.includes('انضم') || text.includes('Join')) {
         console.log('⚠️ Still on join page, final attempt...');
         await forceClickJoinButton(page);
@@ -367,7 +487,6 @@ async function stayInMeeting(page) {
         await takeScreenshot(page, `screenshot_${screenshotIndex}.png`);
         screenshotIndex++;
 
-        // Keep the session alive with mouse movement
         try {
             await page.mouse.move(Math.random() * 800 + 100, Math.random() * 500 + 100);
         } catch (_) { /* non-critical */ }
@@ -377,8 +496,6 @@ async function stayInMeeting(page) {
         await sleep(waitTime);
     }
 }
-
-// ─── Entry point ────────────────────────────────
 
 main().catch((err) => {
     console.error('❌ Bot error:', err);
