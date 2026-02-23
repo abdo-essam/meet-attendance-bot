@@ -1,7 +1,3 @@
-// ============================================
-//  Browser launch, stealth, and session helpers
-// ============================================
-
 const puppeteer = require('puppeteer');
 const { getBrowserLaunchOptions, USER_AGENT, CHROME_PATH } = require('./config');
 
