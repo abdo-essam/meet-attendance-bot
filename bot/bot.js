@@ -708,26 +708,53 @@ async function autoLoginFlow(page) {
         // Check if we landed on "Choose an account"
         const pageText = await page.evaluate(() => document.body ? document.body.innerText : '');
         if (pageText.includes('Choose an account') || pageText.includes('اختيار حساب')) {
-            console.log('🔄 "Choose an account" page detected during login. Trying to select account...');
+            console.log('🔄 "Choose an account" page detected. Trying to select account...');
             const clicked = await page.evaluate((targetEmail) => {
-                const items = document.querySelectorAll('[data-email], li, div[role="link"]');
-                for (const item of items) {
-                    const t = item.textContent || '';
-                    if (t.includes(targetEmail)) {
-                        item.click();
-                        return 'target_account';
+                const targetLower = targetEmail.toLowerCase();
+
+                function forceClick(el) {
+                    el.focus();
+                    el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
+                    el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
+                    el.click();
+                }
+
+                // 1. Try exact data-identifier attributes
+                const dataItems = document.querySelectorAll('[data-identifier], [data-email]');
+                for (const item of dataItems) {
+                    const id = (item.getAttribute('data-identifier') || item.getAttribute('data-email') || '').toLowerCase();
+                    if (id === targetLower) {
+                        forceClick(item);
+                        return 'data_attribute';
                     }
-                    if (t.includes('Use another account') || t.includes('استخدام حساب آخر')) {
-                        item.click();
+                }
+
+                // 2. Try generic clickable containers for the target email
+                const containers = document.querySelectorAll('div[role="link"], div[role="button"], li, div[jsname]');
+                // First try to find the target email
+                for (const item of containers) {
+                    const t = (item.textContent || '').toLowerCase();
+                    if (t.includes(targetLower)) {
+                        forceClick(item);
+                        return 'container_match_email';
+                    }
+                }
+
+                // Fallback: try to find "Use another account"
+                for (const item of containers) {
+                    const t = (item.textContent || '').toLowerCase();
+                    if (t.includes('use another account') || t.includes('استخدام حساب آخر')) {
+                        forceClick(item);
                         return 'use_another';
                     }
                 }
+
                 return null;
             }, EMAIL);
 
             if (clicked) {
                 console.log(`✅ Selected account option (${clicked})`);
-                await sleep(4000);
+                await sleep(5000);
             } else {
                 console.log('⚠️ Could not find account to select.');
             }
