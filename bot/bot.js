@@ -805,6 +805,13 @@ async function autoLoginFlow(page) {
                 break;
             }
 
+            // Check for Secure Browser Block
+            if (lowerText.includes("couldn't sign you in") || lowerText.includes("may not be secure") || lowerText.includes("تعذّر تسجيل الدخول")) {
+                console.log('❌ Google blocked the sign-in attempt ("This browser or app may not be secure").');
+                console.log('🛡️  Google detected the automated browser environment.');
+                break;
+            }
+
             // Check for Verification Challenge
             if (lowerText.includes("verify it's you") || lowerText.includes("إثبات هويتك") || lowerText.includes("choose how you want to sign in")) {
                 console.log('🛡️ Google "Verify it\'s you" challenge detected!');

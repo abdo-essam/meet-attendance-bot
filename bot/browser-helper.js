@@ -18,20 +18,14 @@ async function launchBrowser() {
 async function createStealthPage(browser) {
     const page = await browser.newPage();
 
-    await page.evaluateOnNewDocument(() => {
-        Object.defineProperty(navigator, 'webdriver', { get: () => false });
-
-        // This makes `!!window.navigator.chrome` pass 
-        window.navigator.chrome = { runtime: {} };
-
-        // This is needed for the global check
-        window.chrome = { runtime: {} };
-
-        Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
-        Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en', 'ar'] });
-    });
-
-    await page.setUserAgent(USER_AGENT);
+    // Let puppeteer-extra-plugin-stealth handle the heavy lifting.
+    // We only need to ensure the User Agent accurately matches the actual browser version 
+    // to avoid Client-Hints mismatch detection by Google.
+    let nativeUa = await browser.userAgent();
+    nativeUa = nativeUa.replace('HeadlessChrome', 'Chrome'); // Fallback in case stealth plugin doesn't catch it
+    
+    // Pass the actual browser UA to avoid Chrome 145 reporting as Chrome 131
+    await page.setUserAgent(nativeUa);
     await page.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9,ar;q=0.8' });
 
     try {
