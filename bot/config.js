@@ -8,6 +8,13 @@ const MEET_LINK = process.env.MEET_LINK || 'https://meet.google.com/';
 const DURATION_MINUTES = parseInt(process.env.DURATION_MINUTES || '120', 10);
 const MEETING_NAME = process.env.MEETING_NAME || '';
 
+// Security Verification
+const RECOVERY_EMAIL = process.env.RECOVERY_EMAIL || '';
+const RECOVERY_PHONE = process.env.RECOVERY_PHONE || '';
+const BACKUP_CODE = process.env.BACKUP_CODE || '';
+const USE_PHONE_PROMPT = process.env.USE_PHONE_PROMPT === 'true';
+const USE_SMS = process.env.USE_SMS === 'true';
+
 const COOKIES_DIR = path.join(__dirname, '..', 'cookies');
 const ENCRYPTED_COOKIES_PATH = path.join(COOKIES_DIR, 'session.enc');
 const RAW_COOKIES_PATH = path.join(__dirname, 'cookies.json');
@@ -70,6 +77,11 @@ module.exports = {
     MEET_LINK,
     DURATION_MINUTES,
     MEETING_NAME,
+    RECOVERY_EMAIL,
+    RECOVERY_PHONE,
+    BACKUP_CODE,
+    USE_PHONE_PROMPT,
+    USE_SMS,
     COOKIES_DIR,
     ENCRYPTED_COOKIES_PATH,
     RAW_COOKIES_PATH,

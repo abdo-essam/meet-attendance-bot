@@ -5,7 +5,8 @@
   "scripts": {
     "start": "cd bot && node bot.js",
     "refresh": "cd bot && node refresh-cookies.js",
-    "save-cookies": "cd bot && node save-cookies.js"
+    "save-cookies": "cd bot && node save-cookies.js",
+    "test": "cd bot && node test.js"
   },
   "dependencies": {
     "dotenv": "^17.3.1",

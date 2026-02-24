@@ -786,22 +786,177 @@ async function autoLoginFlow(page) {
             console.log('⚠️ Password field timeout. Checking if additional verification required.');
         }
 
-        console.log('Waiting for login to complete...');
-        // Wait for redirection
+        console.log('Waiting for login to complete or verification challenge...');
+
+        let loginSuccess = false;
+        let needsVerification = false;
+
+        // Wait for either success redirection OR a verification challenge
         for (let i = 0; i < 20; i++) {
             await sleep(3000);
             const url = page.url();
+            const pageText = await getPageText(page);
+            const lowerText = pageText.toLowerCase();
+
+            // Check for success
             if (url.includes('myaccount.google.com') || url.includes('mail.google.com') || url.includes('myadcenter.google.com') || url.includes('accounts.google.com/v3/signin/speedbump') || url.includes('meet.google.com')) {
                 console.log('✅ Google account login appears successful.');
-                return true;
+                loginSuccess = true;
+                break;
+            }
+
+            // Check for Verification Challenge
+            if (lowerText.includes("verify it's you") || lowerText.includes("إثبات هويتك") || lowerText.includes("choose how you want to sign in")) {
+                console.log('🛡️ Google "Verify it\'s you" challenge detected!');
+                needsVerification = true;
+                break;
             }
         }
+
+        if (needsVerification) {
+            console.log('🔄 Attempting to resolve verification challenge...');
+            const challengeResolved = await handleVerificationChallenge(page);
+            if (challengeResolved) {
+                console.log('✅ Verification challenge completed. Waiting for redirection...');
+                for (let i = 0; i < 15; i++) {
+                    await sleep(3000);
+                    const url = page.url();
+                    if (url.includes('myaccount.google.com') || url.includes('mail.google.com') || url.includes('meet.google.com') || url.includes('signin/speedbump')) {
+                        console.log('✅ Google account login successful after verification.');
+                        return true;
+                    }
+                }
+                console.log('⚠️ Timed out waiting for redirection after verification.');
+                return false;
+            } else {
+                console.log('❌ Failed to resolve verification challenge.');
+                return false;
+            }
+        }
+
+        return loginSuccess;
 
     } catch (e) {
         console.log('⚠️ autologin error:', e.message);
     }
 
     return false;
+}
+
+async function handleVerificationChallenge(page) {
+    const { RECOVERY_EMAIL, RECOVERY_PHONE, BACKUP_CODE, USE_PHONE_PROMPT, USE_SMS } = process.env;
+
+    try {
+        // 1. Give the page a moment to fully render the options
+        await sleep(3000);
+
+        // 2. Click "Try another way" if the default option isn't helpful
+        const clickedAnotherWay = await page.evaluate(() => {
+            const buttons = document.querySelectorAll('button, [role="button"], li, div[jsname], a');
+            for (const el of buttons) {
+                const t = (el.textContent || '').toLowerCase();
+                if (t.includes('try another way') || t.includes('تجربة طريقة أخرى')) {
+                    el.click();
+                    return true;
+                }
+            }
+            return false;
+        });
+
+        if (clickedAnotherWay) {
+            console.log('   Clicked "Try another way" to see all options.');
+            await sleep(3000);
+        }
+
+        // 3. Determine which option to press based on config
+        const selectedMethod = await page.evaluate((envOptions) => {
+            const { RECOVERY_EMAIL, RECOVERY_PHONE, BACKUP_CODE, USE_PHONE_PROMPT, USE_SMS } = envOptions;
+            const buttons = document.querySelectorAll('[role="link"], [role="button"], li, div[jsname]');
+
+            for (const el of buttons) {
+                const text = (el.textContent || '').toLowerCase();
+
+                // Offline Headless Priorities
+                if (RECOVERY_EMAIL && (text.includes('confirm your recovery email') || text.includes('تأكيد عنوان البريد الإلكتروني'))) {
+                    el.click(); return 'RECOVERY_EMAIL';
+                }
+                if (RECOVERY_PHONE && (text.includes('confirm your recovery phone') || text.includes('تأكيد رقم هاتف استرداد'))) {
+                    el.click(); return 'RECOVERY_PHONE';
+                }
+                if (BACKUP_CODE && (text.includes('8-digit backup code') || text.includes('رمز احتياطي مؤلف من 8 أرقام'))) {
+                    el.click(); return 'BACKUP_CODE';
+                }
+
+                // Interactive Priorities
+                if (USE_PHONE_PROMPT && (text.includes('tap yes on your phone') || text.includes('use another phone or computer') || text.includes('النقر على نعم'))) {
+                    el.click(); return 'PHONE_PROMPT';
+                }
+                if (USE_SMS && (text.includes('get a verification code at') || text.includes('get a call at') || text.includes('الحصول على رمز'))) {
+                    el.click(); return 'SMS_VOICE';
+                }
+            }
+            return null;
+        }, { RECOVERY_EMAIL, RECOVERY_PHONE, BACKUP_CODE, USE_PHONE_PROMPT, USE_SMS });
+
+        if (!selectedMethod) {
+            console.log('❌ Could not find a matching verification method based on your .env configuration.');
+            await takeScreenshot(page, 'debug_no_verification_match.png');
+            return false;
+        }
+
+        console.log(`✅ Selected verification method: ${selectedMethod}`);
+        await sleep(4000);
+
+        // 4. Handle the specific input for the selected method
+        if (selectedMethod === 'RECOVERY_EMAIL' || selectedMethod === 'RECOVERY_PHONE' || selectedMethod === 'BACKUP_CODE') {
+            const inputVal = selectedMethod === 'RECOVERY_EMAIL' ? RECOVERY_EMAIL :
+                selectedMethod === 'RECOVERY_PHONE' ? RECOVERY_PHONE : BACKUP_CODE;
+
+            try {
+                // Wait for the input field
+                await page.waitForSelector('input[type="email"], input[type="tel"], input[type="text"]', { visible: true, timeout: 10000 });
+                console.log(`   Entering ${selectedMethod} details...`);
+
+                // Determine the right input type
+                const inputTypes = ['input[type="email"]', 'input[type="tel"]', 'input[type="text"]'];
+                for (const selector of inputTypes) {
+                    const el = await page.$(selector);
+                    if (el) {
+                        await page.type(selector, inputVal, { delay: 100 });
+                        await page.keyboard.press('Enter');
+                        break;
+                    }
+                }
+                return true;
+            } catch (err) {
+                console.log(`⚠️ Failed to enter ${selectedMethod}: ${err.message}`);
+                return false;
+            }
+        }
+        else if (selectedMethod === 'PHONE_PROMPT' || selectedMethod === 'SMS_VOICE') {
+            console.log(`================================================================`);
+            console.log(`🔔 INTERACTIVE VERIFICATION REQUIRED (${selectedMethod})`);
+            console.log(`👉 Please check your phone/SMS immediately and approve the login!`);
+            console.log(`⏳ The bot will wait up to 60 seconds for you to complete this...`);
+            console.log(`================================================================`);
+
+            // Wait up to 60 seconds for the user to do it manually
+            for (let i = 0; i < 20; i++) {
+                await sleep(3000);
+                const url = page.url();
+                if (!url.includes('challenge')) {
+                    console.log('✅ Interactive verification completed!');
+                    return true;
+                }
+            }
+            console.log('❌ Interactive verification timed out.');
+            return false;
+        }
+
+    } catch (e) {
+        console.log(`⚠️ Verification handler error: ${e.message}`);
+        return false;
+    }
 }
 
 main().catch((err) => {
