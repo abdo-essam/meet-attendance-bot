@@ -870,7 +870,7 @@ async function handleVerificationChallenge(page) {
 
         // 3. Determine which option to press based on config
         const selectedMethod = await page.evaluate((envOptions) => {
-            const { RECOVERY_EMAIL, RECOVERY_PHONE, BACKUP_CODE, USE_PHONE_PROMPT, USE_SMS } = envOptions;
+            const { RECOVERY_EMAIL, RECOVERY_PHONE, BACKUP_CODE } = envOptions;
             const buttons = document.querySelectorAll('[role="link"], [role="button"], li, div[jsname]');
 
             for (const el of buttons) {
@@ -880,23 +880,23 @@ async function handleVerificationChallenge(page) {
                 if (RECOVERY_EMAIL && (text.includes('confirm your recovery email') || text.includes('تأكيد عنوان البريد الإلكتروني'))) {
                     el.click(); return 'RECOVERY_EMAIL';
                 }
-                if (RECOVERY_PHONE && (text.includes('confirm your recovery phone') || text.includes('تأكيد رقم هاتف استرداد'))) {
+                if (RECOVERY_PHONE && (text.includes('confirm your recovery phone') || text.includes('تأكيد رقم هاتف'))) {
                     el.click(); return 'RECOVERY_PHONE';
                 }
-                if (BACKUP_CODE && (text.includes('8-digit backup code') || text.includes('رمز احتياطي مؤلف من 8 أرقام'))) {
+                if (BACKUP_CODE && (text.includes('8-digit backup code') || text.includes('رمز احتياطي'))) {
                     el.click(); return 'BACKUP_CODE';
                 }
 
-                // Interactive Priorities
-                if (USE_PHONE_PROMPT && (text.includes('tap yes on your phone') || text.includes('use another phone or computer') || text.includes('النقر على نعم'))) {
+                // Interactive Priorities (Fallback)
+                if (text.includes('tap yes on your phone') || text.includes('use another phone or computer') || text.includes('النقر على نعم') || text.includes('استخدام هاتف أو كمبيوتر آخر')) {
                     el.click(); return 'PHONE_PROMPT';
                 }
-                if (USE_SMS && (text.includes('get a verification code at') || text.includes('get a call at') || text.includes('الحصول على رمز'))) {
+                if (text.includes('get a verification code') || text.includes('get a call at') || text.includes('الحصول على رمز تحقّق') || text.includes('تلقي مكالمة')) {
                     el.click(); return 'SMS_VOICE';
                 }
             }
             return null;
-        }, { RECOVERY_EMAIL, RECOVERY_PHONE, BACKUP_CODE, USE_PHONE_PROMPT, USE_SMS });
+        }, { RECOVERY_EMAIL, RECOVERY_PHONE, BACKUP_CODE });
 
         if (!selectedMethod) {
             console.log('❌ Could not find a matching verification method based on your .env configuration.');
