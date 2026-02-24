@@ -76,9 +76,33 @@ async function main() {
     console.log(`📍 Landed on: ${landingUrl}`);
     console.log(`📄 Page text: "${landingText.substring(0, 150).replace(/\n/g, ' ')}..."`);
 
-    // Check if redirected to sign-in
-    if (landingUrl.includes('ServiceLogin') || landingUrl.includes('signin/identifier') || landingUrl.includes('signin/v2') || landingUrl.includes('accounts.google.com')) {
-        console.log('⚠️ Redirected to sign-in! Attempting automatic login...');
+    // Check if redirected to sign-in or requires sign in (guest mode)
+    const requiresSignIn = await page.evaluate(() => {
+        const url = window.location.href;
+        if (url.includes('ServiceLogin') || url.includes('signin/identifier') || url.includes('signin/v2') || url.includes('accounts.google.com')) {
+            return true;
+        }
+
+        const text = document.body ? document.body.innerText.toLowerCase() : '';
+        if (text.includes("what's your name") ||
+            text.includes("ما اسمك") ||
+            text.includes("sign in with your google account") ||
+            text.includes("تسجيل الدخول باستخدام حساب google")) {
+            return true;
+        }
+
+        const links = document.querySelectorAll('a, button, span');
+        for (const link of links) {
+            const t = (link.textContent || '').trim().toLowerCase();
+            if (t === 'sign in' || t === 'تسجيل الدخول') {
+                return true;
+            }
+        }
+        return false;
+    });
+
+    if (requiresSignIn) {
+        console.log('⚠️ Guest mode or sign-in prompt detected! Attempting automatic login...');
         const loginSuccess = await autoLoginFlow(page);
         if (!loginSuccess) {
             console.log('❌ Auto-login failed.');
@@ -146,7 +170,22 @@ async function main() {
 
     // ─── Wait for join page ─────────────────────
     console.log('⏳ Waiting for join page...');
-    const joinReady = await waitForJoinPage(page);
+    let joinReady = await waitForJoinPage(page);
+
+    if (joinReady === 'NEEDS_LOGIN') {
+        const loginSuccess = await autoLoginFlow(page);
+        if (loginSuccess) {
+            console.log('✅ Auto-login succeeded. Proceeding to meeting link...');
+            try { await page.goto(MEET_LINK, { waitUntil: 'networkidle2', timeout: 60000 }); } catch (_) { }
+            joinReady = await waitForJoinPage(page);
+        } else {
+            console.log('❌ Auto-login failed during join wait.');
+            await takeScreenshot(page, 'debug_signin_failed.png');
+            await browser.close();
+            process.exit(1);
+        }
+    }
+
     await takeScreenshot(page, 'step1_before_join.png');
 
     if (!joinReady) {
@@ -295,6 +334,19 @@ async function waitForJoinPage(page) {
             if (bodyText.includes('Choose an account') || bodyText.includes('اختيار حساب')) {
                 await handleAccountChooser(page);
                 continue;
+            }
+
+            // Guest mode / Sign in check
+            const needsSignIn = await page.evaluate(() => {
+                const text = document.body ? document.body.innerText.toLowerCase() : '';
+                return text.includes("what's your name") ||
+                    text.includes("ما اسمك") ||
+                    text.includes("sign in with your google account");
+            });
+
+            if (needsSignIn) {
+                console.log('⚠️ Guest mode detected while waiting. Returning to auto-login...');
+                return 'NEEDS_LOGIN';
             }
 
             // Meeting unavailable
