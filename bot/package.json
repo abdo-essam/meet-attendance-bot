@@ -11,6 +11,9 @@
     "scripts": {
         "start": "node bot.js",
         "refresh": "node refresh-cookies.js",
-        "save-cookies": "node save-cookies.js"
+        "save-cookies": "node save-cookies.js",
+        "test": "node test.js",
+        "test:unit": "RUN_BROWSER_TESTS=false node test.js",
+        "test:full": "xvfb-run --auto-servernum node test.js"
     }
 }

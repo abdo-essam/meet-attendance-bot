@@ -1,0 +1,71 @@
+name: 🧪 Test Bot
+
+on:
+  push:
+    paths:
+      - 'bot/**'
+  pull_request:
+    paths:
+      - 'bot/**'
+  workflow_dispatch:
+    inputs:
+      run_browser_tests:
+        description: 'Run browser tests'
+        required: false
+        default: 'true'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+
+      - name: 📦 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 🌐 Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb dbus dbus-x11 \
+            fonts-liberation libasound2t64 libatk-bridge2.0-0 \
+            libatk1.0-0 libcups2 libdbus-1-3 libdrm2 libgbm1 \
+            libgtk-3-0 libnspr4 libnss3 libx11-xcb1 libxcomposite1 \
+            libxdamage1 libxrandr2 xdg-utils libxshmfence1 \
+            libxkbcommon0 libpango-1.0-0 libcairo2 || true
+
+      - name: 📦 Install dependencies
+        run: cd bot && npm install
+
+      - name: 🧪 Run unit tests (no browser)
+        run: cd bot && RUN_BROWSER_TESTS=false node test.js
+
+      - name: 🧪 Run full tests (with browser)
+        if: ${{ github.event.inputs.run_browser_tests != 'false' }}
+        env:
+          GOOGLE_COOKIES: ${{ secrets.GOOGLE_COOKIES }}
+          COOKIE_PASSWORD: ${{ secrets.COOKIE_PASSWORD }}
+          GOOGLE_EMAIL: ${{ secrets.GOOGLE_EMAIL }}
+          GOOGLE_PASSWORD: ${{ secrets.GOOGLE_PASSWORD }}
+          MEET_LINK: ${{ secrets.MEET_LINK || 'https://meet.google.com/rip-oyzq-eze' }}
+          DURATION_MINUTES: '1'
+          RUN_BROWSER_TESTS: 'true'
+        run: |
+          cd bot
+          # Write cookies if available
+          if [ -n "$GOOGLE_COOKIES" ]; then
+            echo "$GOOGLE_COOKIES" | base64 -d > cookies.json
+          fi
+          xvfb-run --auto-servernum --server-args="-screen 0 1280x720x24 -ac" node test.js
+
+      - name: 📊 Upload test reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-reports-${{ github.run_number }}
+          path: bot/test-reports/
+          retention-days: 30
