@@ -734,7 +734,11 @@ async function autoLoginFlow(page) {
         }
 
         // We might be asked for email
-        const emailInput = await page.$('input[type="email"]');
+        let emailInput = null;
+        try {
+            emailInput = await page.waitForSelector('input[type="email"]', { timeout: 5000 });
+        } catch (_) { }
+
         if (emailInput) {
             console.log('entering email...');
             await page.type('input[type="email"]', EMAIL, { delay: 100 });
