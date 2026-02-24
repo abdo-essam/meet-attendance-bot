@@ -355,10 +355,10 @@ async function waitForJoinPage(page) {
                 return false;
             }
 
-            // Check for join button text
+            // Check for join button text or "Sign in"
             for (const textMatch of JOIN_TEXTS) {
                 const found = await page.evaluate((text) => {
-                    const elements = document.querySelectorAll('span, button');
+                    const elements = document.querySelectorAll('span, button, a');
                     for (const el of elements) {
                         if (el.textContent.includes(text)) return true;
                     }
@@ -369,6 +369,24 @@ async function waitForJoinPage(page) {
                     console.log(`✅ Join page ready! [${attempt + 1}] Found: "${textMatch}"`);
                     return true;
                 }
+            }
+
+            // Explicitly check for "Sign in" button that opens the prompt
+            const hasSignInBtn = await page.evaluate(() => {
+                const links = document.querySelectorAll('span, a, button');
+                for (const link of links) {
+                    const t = (link.textContent || '').trim().toLowerCase();
+                    if (t === 'sign in' || t === 'تسجيل الدخول') {
+                        link.click();
+                        return true;
+                    }
+                }
+                return false;
+            });
+
+            if (hasSignInBtn) {
+                console.log('⚠️ Found a Sign In button, clicking it and starting login flow...');
+                return 'NEEDS_LOGIN';
             }
 
             // Check for pre-join screen indicators
@@ -685,16 +703,46 @@ async function autoLoginFlow(page) {
     console.log('🤖 Starting automated login flow...');
     try {
         await page.goto('https://accounts.google.com/ServiceLogin', { waitUntil: 'networkidle2' });
+        await sleep(3000);
 
-        console.log('entering email...');
-        await page.waitForSelector('input[type="email"]', { timeout: 15000 });
-        await sleep(1000);
-        await page.type('input[type="email"]', EMAIL, { delay: 100 });
-        await page.keyboard.press('Enter');
+        // Check if we landed on "Choose an account"
+        const pageText = await page.evaluate(() => document.body ? document.body.innerText : '');
+        if (pageText.includes('Choose an account') || pageText.includes('اختيار حساب')) {
+            console.log('🔄 "Choose an account" page detected during login. Trying to select account...');
+            const clicked = await page.evaluate((targetEmail) => {
+                const items = document.querySelectorAll('[data-email], li, div[role="link"]');
+                for (const item of items) {
+                    const t = item.textContent || '';
+                    if (t.includes(targetEmail)) {
+                        item.click();
+                        return 'target_account';
+                    }
+                    if (t.includes('Use another account') || t.includes('استخدام حساب آخر')) {
+                        item.click();
+                        return 'use_another';
+                    }
+                }
+                return null;
+            }, EMAIL);
+
+            if (clicked) {
+                console.log(`✅ Selected account option (${clicked})`);
+                await sleep(4000);
+            } else {
+                console.log('⚠️ Could not find account to select.');
+            }
+        }
+
+        // We might be asked for email
+        const emailInput = await page.$('input[type="email"]');
+        if (emailInput) {
+            console.log('entering email...');
+            await page.type('input[type="email"]', EMAIL, { delay: 100 });
+            await page.keyboard.press('Enter');
+            await sleep(4000);
+        }
 
         console.log('Waiting for password field or verification...');
-        await sleep(4000);
-
         // Wait for password field
         try {
             await page.waitForSelector('input[type="password"]', { visible: true, timeout: 15000 });
@@ -702,6 +750,7 @@ async function autoLoginFlow(page) {
             console.log('entering password...');
             await page.type('input[type="password"]', PASSWORD, { delay: 100 });
             await page.keyboard.press('Enter');
+            await sleep(5000);
         } catch (e) {
             console.log('⚠️ Password field timeout. Checking if additional verification required.');
         }
@@ -711,8 +760,8 @@ async function autoLoginFlow(page) {
         for (let i = 0; i < 20; i++) {
             await sleep(3000);
             const url = page.url();
-            if (url.includes('myaccount.google.com') || url.includes('mail.google.com') || url.includes('myadcenter.google.com') || url.includes('accounts.google.com/v3/signin/speedbump')) {
-                console.log('Google account login appears successful.');
+            if (url.includes('myaccount.google.com') || url.includes('mail.google.com') || url.includes('myadcenter.google.com') || url.includes('accounts.google.com/v3/signin/speedbump') || url.includes('meet.google.com')) {
+                console.log('✅ Google account login appears successful.');
                 return true;
             }
         }
