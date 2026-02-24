@@ -1,4 +1,6 @@
-const puppeteer = require('puppeteer');
+const puppeteer = require('puppeteer-extra');
+const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+puppeteer.use(StealthPlugin());
 const { getBrowserLaunchOptions, USER_AGENT, CHROME_PATH } = require('./config');
 
 function sleep(ms) {
@@ -6,7 +8,7 @@ function sleep(ms) {
 }
 
 async function launchBrowser() {
-    console.log(`\n🚀 Launching Chrome${CHROME_PATH ? ` at: ${CHROME_PATH}` : ' (puppeteer bundled)'}`);
+    console.log(`\n🚀 Launching Chrome${CHROME_PATH ? ` at: ${CHROME_PATH}` : ' (puppeteer-extra)'}`);
     const options = getBrowserLaunchOptions();
     const browser = await puppeteer.launch(options);
     console.log('✅ Browser launched!');
@@ -18,7 +20,13 @@ async function createStealthPage(browser) {
 
     await page.evaluateOnNewDocument(() => {
         Object.defineProperty(navigator, 'webdriver', { get: () => false });
+
+        // This makes `!!window.navigator.chrome` pass 
         window.navigator.chrome = { runtime: {} };
+
+        // This is needed for the global check
+        window.chrome = { runtime: {} };
+
         Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
         Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en', 'ar'] });
     });

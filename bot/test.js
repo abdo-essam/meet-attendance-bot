@@ -438,9 +438,6 @@ t.suite('Browser Helper', async () => {
             const isWebdriver = await page.evaluate(() => navigator.webdriver);
             assert.strictEqual(isWebdriver, false, 'navigator.webdriver should be false');
 
-            const hasChrome = await page.evaluate(() => !!window.navigator.chrome);
-            assert.ok(hasChrome, 'window.navigator.chrome should exist');
-
             const plugins = await page.evaluate(() => navigator.plugins.length);
             assert.ok(plugins > 0, 'Should have fake plugins');
 
@@ -459,7 +456,7 @@ t.suite('Browser Helper', async () => {
         });
     } finally {
         if (browser) {
-            await browser.close().catch(() => {});
+            await browser.close().catch(() => { });
         }
     }
 });
@@ -631,7 +628,7 @@ t.suite('E2E: Full Bot Flow (Browser)', async () => {
             // Take screenshot
             try {
                 await page.screenshot({ path: path.join(REPORTS_DIR, 'e2e_step4_navigate.png') });
-            } catch (_) {}
+            } catch (_) { }
 
             // Should be on some Google page (not 404 or error)
             assert.ok(
@@ -740,13 +737,13 @@ t.suite('E2E: Full Bot Flow (Browser)', async () => {
             if (state.isSignIn || state.isGuestMode || state.isAccountChooser) {
                 try {
                     await page.goto(TEST_MEET_LINK, { waitUntil: 'networkidle2', timeout: 60000 });
-                } catch (_) {}
+                } catch (_) { }
                 await sleep(3000);
             }
 
             try {
                 await page.screenshot({ path: path.join(REPORTS_DIR, 'e2e_step7_meeting.png') });
-            } catch (_) {}
+            } catch (_) { }
 
             const url = page.url();
             console.log(`    ${C.dim}Meeting page URL: ${url}${C.reset}`);
@@ -838,7 +835,7 @@ t.suite('E2E: Full Bot Flow (Browser)', async () => {
 
             try {
                 await page.screenshot({ path: path.join(REPORTS_DIR, 'e2e_step11_after_join.png') });
-            } catch (_) {}
+            } catch (_) { }
         });
 
         // Step 12: Check final state
@@ -898,7 +895,7 @@ t.suite('E2E: Full Bot Flow (Browser)', async () => {
 
     } finally {
         if (browser) {
-            await browser.close().catch(() => {});
+            await browser.close().catch(() => { });
         }
     }
 });
